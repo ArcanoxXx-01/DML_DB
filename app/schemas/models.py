@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Literal
+from typing import List, Literal, Dict
 
 
 class ModelHealthUpdateResponse(BaseModel):
@@ -7,14 +7,19 @@ class ModelHealthUpdateResponse(BaseModel):
     health_updated: bool
 
 
+class SaveModelRequest(BaseModel):
+    model_id: str
+    model_data: Dict
+
+
+class GetModelResponse(BaseModel):
+    model_data: List[str]
+
+
 class ModelToRunResponse(BaseModel):
     model_id: str
     dataset_id: str
-    task: Literal["regression", "classification"]
-
-
-class ModelMetricsResponse(BaseModel):
-    model_data: List[str]
+    task: Literal["training", "prediction"]
 
 
 class ModelMetricsUpdateRequest(BaseModel):

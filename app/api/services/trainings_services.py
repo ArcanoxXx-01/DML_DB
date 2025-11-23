@@ -20,8 +20,7 @@ def create_training(
             )
         )
         w.close()
-    created_models = create_models_for_training(training_id, models, task)
-
+    created_models = create_models_for_training(training_id, training_type, task, status)
     return {"training_id": training_id, "models_created": created_models}
 
 

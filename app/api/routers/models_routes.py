@@ -29,7 +29,7 @@ def get_model_to_run_endpoint():
     model = find_model_to_run()
     if not model:
         model = None
-    return ModelToRunResponse(model_id=model)
+    return ModelToRunResponse(**model)
 
 
 @router.get("/{model_id}", response_model=ModelMetricsResponse)
