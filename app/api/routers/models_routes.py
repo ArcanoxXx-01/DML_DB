@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Form
 from schemas.models import (
     ModelHealthUpdateResponse,
     ModelMetricsResponse,
@@ -41,7 +41,7 @@ def get_model_endpoint(model_id: str):
 
 
 @router.put("/{model_id}", response_model=ModelUpdatedResponse)
-def update_model_endpoint(model_id: str, req: ModelMetricsUpdateRequest):
+def update_model_endpoint(model_id: str, req: ModelMetricsUpdateRequest= Form(...)):
     ok = update_model_metrics(model_id, req.results)
     if not ok:
         raise HTTPException(status_code=404, detail="Modelo no encontrado")

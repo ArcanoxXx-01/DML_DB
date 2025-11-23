@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Form
 from api.services.trainings_services import create_training, get_training_by_id
 from schemas.trainings import TrainingCreateRequest, TrainingResponse
 
@@ -7,7 +7,7 @@ router = APIRouter(prefix="/trainings", tags=["trainings"])
 
 
 @router.post("")
-def create_training_endpoint(req: TrainingCreateRequest):
+def create_training_endpoint(req: TrainingCreateRequest = Form(...)):
     data = req.model_dump()
     return create_training(**data)
 
