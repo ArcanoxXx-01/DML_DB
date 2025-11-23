@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Form
-from app.api.services.trainings_services import create_training, get_training_by_id
+from api.services.trainings_services import create_training, get_training_by_id
 import pandas as pd
 
 router = APIRouter(prefix="/trainings", tags=["trainings"])

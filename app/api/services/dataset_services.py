@@ -1,6 +1,6 @@
 from pathlib import Path
 import csv
-from app.config.manager import DATASETS, DATASETS_META, BATCH_SIZE
+from config.manager import DATASETS, DATASETS_META, BATCH_SIZE
 
 
 def save_batches(dataset_id: str, rows: list[list[str]]) -> int:

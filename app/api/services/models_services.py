@@ -1,8 +1,8 @@
 from pathlib import Path
 import csv
-from app.config.manager import MODELS_META, METRICS
+from config.manager import MODELS_META, METRICS
 from datetime import datetime, timedelta
-from app.utils.utils import gen_id, row
+from utils.utils import gen_id, row
 
 
 def create_models_for_training(training_id: str, model_names: list[str]):

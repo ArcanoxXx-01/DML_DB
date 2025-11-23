@@ -1,7 +1,7 @@
 from fastapi import FastAPI
-from app.api.routers import datasets_routes, trainings_routes, models_routes
-from app.config.manager import API
-from app.utils.utils import ensure_paths_exists
+from api.routers import datasets_routes, trainings_routes, models_routes
+from config.manager import API
+from utils.utils import ensure_paths_exists
 
 ensure_paths_exists()
 

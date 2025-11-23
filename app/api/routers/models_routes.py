@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Form
 from datetime import datetime, timedelta
-from app.api.services.models_services import (
+from api.services.models_services import (
     update_health,
     find_model_to_run,
     get_model_metrics,

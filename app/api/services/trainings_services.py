@@ -1,8 +1,8 @@
 from pathlib import Path
 import csv
 from datetime import datetime
-from app.config.manager import TRAININGS_META
-from app.api.services.models_services import (
+from config.manager import TRAININGS_META
+from api.services.models_services import (
     create_models_for_training,
     list_models_by_training_id,
 )

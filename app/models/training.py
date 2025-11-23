@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
-from app.models.task import TaskType
-from app.models.status import Status
+from models.task import TaskType
+from models.status import Status
 
 
 class Training(BaseModel):
