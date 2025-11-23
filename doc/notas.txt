@@ -1,16 +1,51 @@
 training id , dataset id, model id 1, status 1, model id 2, status 2, ...  hasta 10 // Tabala de trainings
 
 
+Datasets:
 
-Endpoints:
+Crear un Dataset:
+    actualizar
 
-1- Que modelos ejecutar: para que back-ends ejecuten modeos:
+Get Dataset:
+
+    /api/v1/datasets/{dataset_id}/{batch}
+
+    // los batch son de tamaño 64
+
+Modelos:
+
+Que modelos ejecutar: para que back-ends ejecuten modeos:
 
     get : /api/v1/models/torun
 
     Devolver un unico id de un modelo y la tarea y el dataset_id 
 
-2- Crear un training
+Guardar modelos:
+
+    Input:
+    {
+        model_id,
+        model_data: dict
+    }
+
+Get model:
+
+    /api/v1/models/{model_id}
+
+    Ontput: 
+    {
+        model_data:dict
+    }
+
+Save model runinig status:
+
+    /api/v1/models/healt/{model_id}
+
+    // actualizar la ultima vez
+
+Trainings
+
+Crear un training
 
     Post :
 
@@ -19,7 +54,7 @@ Endpoints:
     training_type,
     models: List[models_names]
 
-3-  Get training
+ Get training
 
     training_id:
 
@@ -31,30 +66,7 @@ Endpoints:
         models_ids: LIst,
     }
 
-4- Guardar modelos:
-
-    Input:
-    {
-        model_id,
-        model_data: dict
-    }
-
-5- Get model:
-
-    /api/v1/models/{model_id}
-
-    Ontput: 
-    {
-        model_data:dict
-    }
-
-6- Save model runinig status:
-
-    /api/v1/models/healt/{model_id}
-
-    // actualizar la ultima vez
-
-7- Save training Results:
+Save training Results:
 
     Input:
     {
@@ -68,17 +80,10 @@ Endpoints:
     }
     // Crear una tabla con model_id, metric_1, metric_2, ... // hasta el tope de las metricas que se defina
 
-8- Save Prediction:
+Save Prediction:
 
     {
         model_id,
         dataset_id,
         prediction_list: json
     }
-
-9- Get Dataset:
-
-    /api/v1/datasets/{dataset_id}/{batch}
-
-    // los batch son de tamaño 64
-

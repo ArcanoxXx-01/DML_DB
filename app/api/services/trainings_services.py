@@ -1,12 +1,10 @@
-from pathlib import Path
-import csv
 from datetime import datetime
 from config.manager import TRAININGS_META
 from api.services.models_services import (
     create_models_for_training,
     list_models_by_training_id,
 )
-
+import csv
 
 def create_training(
     training_id: str, dataset_id: str, task: str, training_type: str, models: list[str]

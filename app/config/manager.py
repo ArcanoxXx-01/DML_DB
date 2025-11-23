@@ -5,6 +5,8 @@ from pathlib import Path
 BATCH_SIZE = 64
 METRICS = 10
 
+MEMBERSHIPS_TIME_REFRESH = 10
+
 
 # ===== PATHS =====
 
