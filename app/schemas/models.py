@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Literal
 
 
 class ModelHealthUpdateResponse(BaseModel):
@@ -9,6 +9,8 @@ class ModelHealthUpdateResponse(BaseModel):
 
 class ModelToRunResponse(BaseModel):
     model_id: str
+    dataset_id: str
+    task: Literal["regression", "classification"]
 
 
 class ModelMetricsResponse(BaseModel):

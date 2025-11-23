@@ -6,6 +6,7 @@ from api.services.models_services import (
 )
 import csv
 
+
 def create_training(
     training_id: str, dataset_id: str, task: str, training_type: str, models: list[str]
 ):
@@ -19,7 +20,7 @@ def create_training(
             )
         )
         w.close()
-    created_models = create_models_for_training(training_id, models)
+    created_models = create_models_for_training(training_id, models, task)
 
     return {"training_id": training_id, "models_created": created_models}
 

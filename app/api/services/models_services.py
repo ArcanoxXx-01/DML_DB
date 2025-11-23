@@ -2,17 +2,24 @@ from pathlib import Path
 import csv
 from config.manager import MODELS_META, METRICS
 from datetime import datetime, timedelta
-from utils.utils import gen_id, row
+from utils.utils import gen_id
 
 
-def create_models_for_training(training_id: str, model_names: list[str]):
+def create_models_for_training(training_id: str, model_names: list[str], task: str):
     created = []
     with open(MODELS_META, "a") as w:
         for name in model_names:
             model_id = gen_id("model")
-            r = [model_id, training_id, name, "pending", datetime.utcnow().isoformat()]
+            r = [
+                model_id,
+                training_id,
+                name,
+                task,
+                "pending",
+                datetime.utcnow().isoformat(),
+            ]
             r.extend(["0" for _ in range(METRICS)])
-            w.write('\n'+','.join(r))
+            w.write("\n" + ",".join(r))
             created.append(model_id)
     return created
 
@@ -59,9 +66,17 @@ def find_model_to_run():
             try:
                 h = datetime.fromisoformat(row["health"])
             except:
-                return row["model_id"]
+                return {
+                    "model_id": row["model_id"],
+                    "dataset_id": row["dataset_id"],
+                    "task": row["task"],
+                }
             if h < limit:
-                return row["model_id"]
+                return {
+                    "model_id": row["model_id"],
+                    "dataset_id": row["dataset_id"],
+                    "task": row["task"],
+                }
     return None
 
 
