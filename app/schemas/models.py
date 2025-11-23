@@ -1,21 +1,24 @@
 from pydantic import BaseModel
-from typing import Dict
+from typing import List
 
 
-class modelToRunResponse(BaseModel):
+class ModelHealthUpdateResponse(BaseModel):
     model_id: str
-    dataset_id: str
-    running_type: str
+    health_updated: bool
 
 
-class saveModelRequest(BaseModel):
-    model_id: str
-    model_data: Dict
-
-
-class getModelRequest(BaseModel):
+class ModelToRunResponse(BaseModel):
     model_id: str
 
 
-class getModelResponse(BaseModel):
-    model_data: Dict
+class ModelMetricsResponse(BaseModel):
+    model_data: List[str]
+
+
+class ModelMetricsUpdateRequest(BaseModel):
+    results: List[str]
+
+
+class ModelUpdatedResponse(BaseModel):
+    model_id: str
+    updated: bool

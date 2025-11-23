@@ -1,7 +1,7 @@
 import time, uuid
 from typing import List, Optional
 from datetime import datetime
-from app.config.manager import (
+from config.manager import (
     _DATA_PATH_,
     DATASETS,
     DATASETS_META,

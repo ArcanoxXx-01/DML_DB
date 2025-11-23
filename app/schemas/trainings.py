@@ -1,25 +1,21 @@
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Literal
+from datetime import datetime
 
 
-class createTrainingRequest(BaseModel):
+class TrainingCreateRequest(BaseModel):
+    training_id: str
+    dataset_id: str
+    training_type: Literal["training", "prediction"]
+    task: Literal["regression", "classification"]
+    models: List[str]
+
+
+class TrainingResponse(BaseModel):
     training_id: str
     dataset_id: str
     training_type: str
-    models: list[str]  # lista de model_name
-
-
-class getTrainingRespanse(BaseModel):
-    training_id: str
-    dataset_id: str
-    training_type: str
-    models_ids: List
-
-
-class saveTrainingResultsRequest(BaseModel):
-    model_id: str
-    results: Dict  # { metric_1, metric_2, ...}
-
-
-class uploadTrainingRespanse(BaseModel):
-    pass
+    task: str
+    status: str
+    created_at: datetime
+    models_id: List[str]
