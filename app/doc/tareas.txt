@@ -1,0 +1,36 @@
+Datasets:
+    - Guardarlo por batchs
+        - guardar el archivo en DATASETS_DIR/id_batch_.csv✅
+        - Guardar en una tabla el id y la ultima 
+    - Tomarlo por batchs
+        - devolver el batch asociado al id
+
+Training:
+    - Crear un entrenamiento:
+        - Guardar en una Tabla: [training_id, dataset_id, training_type, task]
+        - Guardar en otra tabla: [training_id, model_id] para cada modelo asociado al training
+
+    - Obtener un training dado un training_id:
+        - Crear la lista de los models_ids asociados al training_id
+        - Devolver un diccionario con:
+            {
+                training_id,
+                dataset_id,
+                training_type,
+                task,
+                models_ids,
+            }
+
+    - Save training results dado: [model_id, results] donde results = [floats] 
+        - Guardar en una tabla [model_id, metric_1, metric_2,...]
+
+Prediction;
+
+    - Guardar las predicciones dado dataset_id, training_id y prediction_list (json)
+
+
+Modelos:
+    - Modelo a entrenar
+        - Devuelve un model_id que la ultima vez que se actualizo fue hace mas de 20s
+        - Guardar un modelo dado su model_id y su model_data
+        - Obtener un modelo dado su model_id
