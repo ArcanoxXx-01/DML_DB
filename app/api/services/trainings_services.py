@@ -4,13 +4,15 @@ from api.services.models_services import (
     create_models_for_training,
     list_models_by_training_id,
 )
+from typing import List
 import csv
 
 
 def create_training(
-    training_id: str, dataset_id: str, task: str, training_type: str, models: list[str]
+    training_id: str, dataset_id: str, training_type: str, models_names: List[str]
 ):
-    created_at = datetime.utcnow().isoformat()
+    task = "training"
+    created_at = datetime.now().isoformat()
     status = "pending"
     with open(TRAININGS_META, "a") as w:
         w.write(
@@ -20,7 +22,12 @@ def create_training(
             )
         )
         w.close()
-    created_models = create_models_for_training(training_id, training_type, task, status)
+    created_models = create_models_for_training(
+        training_id=training_id,
+        model_names=models_names,
+        training_type=training_type,
+        task=task,
+    )
     return {"training_id": training_id, "models_created": created_models}
 
 

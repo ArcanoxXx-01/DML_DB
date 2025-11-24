@@ -39,4 +39,9 @@ def ensure_paths_exists():
                 w.write(HEADERS[f])
                 w.close()
 
-
+# def get_dataset_id(training_id: str):
+#     with open(TRAININGS_META, 'r')as r:
+#         for row in r.readlines():
+#             if(row["training_id"]==training_id):
+#                 return row["dataset_id"]
+#         return None

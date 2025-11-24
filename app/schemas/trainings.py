@@ -6,9 +6,8 @@ from datetime import datetime
 class TrainingCreateRequest(BaseModel):
     training_id: str
     dataset_id: str
-    task: Literal["training", "prediction"]
     training_type: Literal["regression", "classification"]
-    models: List[str]
+    models_names: List[str]
 
 
 class TrainingResponse(BaseModel):

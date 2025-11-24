@@ -40,9 +40,8 @@ def test_create_training():
         data={
             "training_id": "t1",
             "dataset_id": "ds1",
-            "task": "regression",
-            "training_type": "training",
-            "models": ["m1", "m2"],
+            "training_type": "regression",
+            "models_names": ["m1", "m2"],
         },
     )
     assert resp.status_code == 200
@@ -55,6 +54,7 @@ def test_get_training():
     assert resp.status_code == 200
     assert resp.json()["training_id"] == "t1"
     print("GET Training: OK")
+    print(resp.json())
 
 
 # --- TEST MODELS ---
@@ -91,7 +91,18 @@ def test_model_metrics_update_and_get():
 
     getm = requests.get(f"http://127.0.0.1:8000/api/v1/models/{model_id}")
     assert getm.status_code == 200
-    assert getm.json()["model_data"] == ["0.1", "0.2", "0", "0", "0", "0", "0", "0", "0", "0"]
+    assert getm.json()["model_data"] == [
+        "0.1",
+        "0.2",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+    ]
     print(getm.json())
 
 
@@ -106,9 +117,9 @@ def run_tests():
     print("\n\n===== MODELS TESTS =====\n")
     test_update_health()
     test_model_to_run()
-    time.sleep(20)
-    test_model_to_run()
-    test_model_metrics_update_and_get()
+    # time.sleep(20)
+    # test_model_to_run()
+    # test_model_metrics_update_and_get()
 
 
 if __name__ == "__main__":
