@@ -1,6 +1,0 @@
-los dataset se guardan como archivos csv de 64 filas
-
-
-
-Tablas:
-

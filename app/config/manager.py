@@ -5,6 +5,8 @@ from pathlib import Path
 BATCH_SIZE = 64
 METRICS = 10
 
+MEMBERSHIPS_TIME_REFRESH = 10
+
 
 # ===== PATHS =====
 
@@ -19,7 +21,7 @@ TRAININGS_META = _DATA_PATH_ / "trainings.csv"
 
 HEADERS = {
     DATASETS_META: "dataset_id,batches",
-    MODELS_META: "model_id,training_id,model_name,status,health,"
+    MODELS_META: "model_id,training_id,model_name,task,training_type,status,health,"
     + ",".join([f"metric_{i}" for i in range(METRICS)]),
     TRAININGS_META: "training_id,dataset_id,training_type,task,status,created_at",
 }
