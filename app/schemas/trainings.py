@@ -14,7 +14,4 @@ class TrainingResponse(BaseModel):
     training_id: str
     dataset_id: str
     training_type: str
-    task: str
-    status: str
-    created_at: datetime
-    models_id: List[str]
+    models_ids: List[str]
