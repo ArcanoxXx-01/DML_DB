@@ -19,7 +19,7 @@ class GetModelResponse(BaseModel):
 class ModelToRunResponse(BaseModel):
     model_id: str
     dataset_id: str
-    task: Literal["training", "prediction"]
+    running_type: Literal["training", "prediction"]
 
 
 class ModelMetricsUpdateRequest(BaseModel):

@@ -24,6 +24,7 @@ def create_training(
         w.close()
     created_models = create_models_for_training(
         training_id=training_id,
+        dataset_id=dataset_id,
         model_names=models_names,
         training_type=training_type,
         task=task,

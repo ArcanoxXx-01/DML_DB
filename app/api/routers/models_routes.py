@@ -17,7 +17,7 @@ from api.services.models_services import (
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.put("/health/{model_id}", response_model=ModelHealthUpdateResponse)
+@router.get("/health/{model_id}", response_model=ModelHealthUpdateResponse)
 def update_health_endpoint(model_id: str):
     ok = update_health(model_id)
     if not ok:
@@ -29,7 +29,7 @@ def update_health_endpoint(model_id: str):
 def get_model_to_run_endpoint():
     model = find_model_to_run()
     if not model:
-        model = {"model_id": "", "dataset_id": "", "task": "training"}
+        model = {"model_id": "", "dataset_id": "", "running_type": "training"}
     return ModelToRunResponse(**model)
 
 
