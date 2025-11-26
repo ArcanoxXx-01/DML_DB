@@ -1,3 +1,5 @@
 fastapi
 uuid
 iso8601
+uvicorn[standard]
+python-multipart

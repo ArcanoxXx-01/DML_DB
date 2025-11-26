@@ -14,7 +14,19 @@ class TrainingResponse(BaseModel):
     training_id: str
     dataset_id: str
     training_type: str
-    task: str
-    status: str
-    created_at: datetime
-    models_id: List[str]
+    models_ids: List[str]
+
+
+from typing import Dict
+
+
+class ResultsCreateRequest(BaseModel):
+    training_id: str
+    model_id: str
+    results: Dict[str, float]
+
+
+class ResultsResponse(BaseModel):
+    training_id: str
+    model_id: str
+    results: Dict[str, float]

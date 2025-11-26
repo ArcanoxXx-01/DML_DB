@@ -17,3 +17,8 @@ Run Tests (in a new terminal)
 ```batch
 python3 tests.py
 ```
+
+
+
+docker build -t dml_db_image .
+docker run -d --name dml_db_container --network dml-network --network-alias db -p 8000:8000 dml_db_image

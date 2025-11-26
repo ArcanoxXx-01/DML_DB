@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Body
 from fastapi.responses import FileResponse
 from schemas.datasets import DatasetUploadResponse
 from api.services.dataset_services import (
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
 @router.post("/", response_model=DatasetUploadResponse)
-async def upload_dataset(dataset_id: str = Form(...), file: UploadFile = File(...)):
+async def upload_dataset(dataset_id: str = Body(...), file: UploadFile = File(...)):
     content = await file.read()
     text = content.decode("utf-8").splitlines()
     rows = list(csv.reader(text))
