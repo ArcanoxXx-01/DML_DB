@@ -44,7 +44,7 @@ def list_models_by_training_id(training_id: str):
     return ids
 
 
-def update_health(model_id: str):
+def update_health(model_id: str, dataset_id: str) -> bool:
     rows = []
     found = False
     try:
@@ -58,7 +58,7 @@ def update_health(model_id: str):
     health_index = header.index("health")
 
     for i in range(1, len(rows)):
-        if rows[i][0] == model_id:
+        if rows[i][0] == model_id and rows[i][2] == dataset_id:
             rows[i][health_index] = datetime.utcnow().isoformat()
             found = True
             break

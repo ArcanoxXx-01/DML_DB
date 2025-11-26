@@ -14,6 +14,7 @@ _DATA_PATH_ = Path("./data")
 DATASETS = _DATA_PATH_ / "datasets"
 DATASETS_META = _DATA_PATH_ / "datasets.csv"
 MODELS = _DATA_PATH_ / "models"
+PREDICTIONS = _DATA_PATH_ / "predictions"
 MODELS_META = _DATA_PATH_ / "models.csv"
 TRAININGS_META = _DATA_PATH_ / "trainings.csv"
 

@@ -9,6 +9,7 @@ from config.manager import (
     MODELS,
     MODELS_META,
     HEADERS,
+    PREDICTIONS
 )
 
 
@@ -32,6 +33,7 @@ def ensure_paths_exists():
     _DATA_PATH_.mkdir(exist_ok=True)
     DATASETS.mkdir(exist_ok=True)
     MODELS.mkdir(exist_ok=True)
+    PREDICTIONS.mkdir(exist_ok=True)
     files = [DATASETS_META, TRAININGS_META, MODELS_META]
     for f in files:
         if not f.exists():
