@@ -1,9 +1,11 @@
 from pathlib import Path
 import csv
-from config.manager import MODELS_META, METRICS
+import json
+from typing import Optional, Any
+from config.manager import MODELS_META, METRICS, MODELS
 from datetime import datetime, timedelta
 from utils.utils import gen_id
-
+from schemas.models import GetModelResponse
 
 def create_models_for_training(
     training_id: str, dataset_id: str, model_names: list[str], training_type: str, task: str
@@ -102,6 +104,51 @@ def get_model_metrics(model_id: str):
     except FileNotFoundError:
         return None
     return None
+
+
+def get_model_info(model_id: str):
+    """Return basic model info from MODELS_META CSV for a given model_id.
+
+    Returns a dict with keys: model_id, model_name, model_type, training_id, dataset_id
+    or None if the file or model is not found.
+    """
+    try:
+        with MODELS_META.open("r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("model_id") == model_id:
+                    return {
+                        "model_id": row.get("model_id", ""),
+                        "model_name": row.get("model_name", ""),
+                        # mapping `model_type` to the CSV `training_type`
+                        "model_type": row.get("training_type", ""),
+                        "training_id": row.get("training_id", ""),
+                        "dataset_id": row.get("dataset_id", ""),
+                    }
+    except FileNotFoundError:
+        return None
+    return None
+
+def load_model(model_id: str) -> Optional[GetModelResponse]:
+    model_file = MODELS / f"{model_id}.json"
+    try:
+        if model_file.exists():
+            with model_file.open("r") as f:
+                data = json.load(f)
+            return {"model_data": data}
+    except Exception:
+        return None
+
+def save_model_file(model_id: str, update: bool, model_data: Any) -> bool:
+    """Save the given model_data (JSON-serializable) into the models folder as {model_id}.json."""
+    try:
+        MODELS.mkdir(parents=True, exist_ok=True)
+        model_file = MODELS / f"{model_id}.json"
+        with model_file.open("w") as f:
+            json.dump(model_data, f, indent=2)
+        return True
+    except Exception:
+        return False
 
 
 def update_model_metrics(model_id: str, results: list[str]):
