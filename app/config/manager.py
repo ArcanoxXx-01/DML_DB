@@ -21,8 +21,7 @@ TRAININGS_META = _DATA_PATH_ / "trainings.csv"
 
 HEADERS = {
     DATASETS_META: "dataset_id,batches",
-    MODELS_META: "model_id,training_id,dataset_id,model_name,training_type,task,status,health,"
-    + ",".join([f"metric_{i}" for i in range(METRICS)]),
+    MODELS_META: "model_id,training_id,dataset_id,model_name,training_type,task,status,health,accuracy,f1_score,precision,recall,roc_auc,log_loss,rmse,mae,mse,r2",
     TRAININGS_META: "training_id,dataset_id,training_type,task,status,created_at",
 }
 

@@ -4,6 +4,7 @@ from api.services.models_services import (
     create_models_for_training,
     list_models_by_training_id,
 )
+from api.services.models_services import update_model_metrics, update_health
 from typing import List
 import csv
 
@@ -40,3 +41,22 @@ def get_training_by_id(training_id: str):
                 models = list_models_by_training_id(training_id)
                 return {**row, "models_id": models}
     return None
+
+
+def save_results(training_id: str, model_id: str, results: dict):
+    """Save training results (metrics) for a given model.
+
+    The `results` dict should map metric_name -> value. Each provided
+    metric will be written to the corresponding column in `MODELS_META`
+    if that column exists; metrics without matching columns are skipped.
+    If the model is not found, returns a dict with saved=False.
+    """
+    try:
+        updated = update_model_metrics(model_id, results)
+        if not updated:
+            return {"saved": False, "reason": "model not found"}
+        # update last-seen/health timestamp
+        update_health(model_id)
+        return {"saved": True, "training_id": training_id, "model_id": model_id, "results": results}
+    except Exception as e:
+        return {"saved": False, "reason": str(e)}

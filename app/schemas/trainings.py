@@ -15,3 +15,18 @@ class TrainingResponse(BaseModel):
     dataset_id: str
     training_type: str
     models_ids: List[str]
+
+
+from typing import Dict
+
+
+class ResultsCreateRequest(BaseModel):
+    training_id: str
+    model_id: str
+    results: Dict[str, float]
+
+
+class ResultsResponse(BaseModel):
+    training_id: str
+    model_id: str
+    results: Dict[str, float]

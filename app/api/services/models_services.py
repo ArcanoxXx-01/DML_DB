@@ -6,6 +6,7 @@ from config.manager import MODELS_META, METRICS, MODELS
 from datetime import datetime, timedelta
 from utils.utils import gen_id
 from schemas.models import GetModelResponse
+from models.status import Status
 
 def create_models_for_training(
     training_id: str, dataset_id: str, model_names: list[str], training_type: str, task: str
@@ -76,6 +77,9 @@ def find_model_to_run():
         with MODELS_META.open("r") as f:
             reader = csv.DictReader(f)
             for row in reader:
+                status = row.get("status", "")
+                if status == Status.COMPLETED.value:
+                    continue
                 flag = False
                 try:
                     h = datetime.fromisoformat(row["health"])
@@ -151,21 +155,42 @@ def save_model_file(model_id: str, update: bool, model_data: Any) -> bool:
         return False
 
 
-def update_model_metrics(model_id: str, results: list[str]):
+def update_model_metrics(model_id: str, results: dict[str, float]) -> bool:
+    """Update model metric columns by metric name.
+
+    `results` should be a mapping of metric_name -> value. For each
+    metric present in `results`, if a column with that metric name
+    exists in `MODELS_META` it will be updated; otherwise it is skipped.
+    Returns True on success, False if the model or file was not found.
+    """
     try:
         with MODELS_META.open("r") as f:
             rows = list(csv.reader(f))
     except FileNotFoundError:
         return False
 
+    if not rows:
+        return False
+
     header = rows[0]
-    metric_indices = [i for i, h in enumerate(header) if h.startswith("metric_")]
+    # map header name -> column index for quick lookup
+    header_index = {h: i for i, h in enumerate(header)}
     found = False
 
+    # find column index for status (fall back to known position if header missing)
+    status_index = header_index.get("status")
+
     for i in range(1, len(rows)):
-        if rows[i][0] == model_id:
-            for idx, val in zip(metric_indices, results):
-                rows[i][idx] = val
+        if rows[i][0] == model_id and rows[i][header_index['task']]=='training':
+            for metric_name, val in results.items():
+                if metric_name in header_index:
+                    # results values are floats; convert to string for CSV
+                    rows[i][header_index[metric_name]] = str(val)
+
+            # mark model as completed after metrics update
+            if status_index is not None:
+                rows[i][status_index] = Status.COMPLETED.value
+
             found = True
             break
 
