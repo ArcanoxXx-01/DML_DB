@@ -2,7 +2,7 @@ from pathlib import Path
 import csv
 import json
 from typing import Optional, Any
-from config.manager import MODELS_META, METRICS, MODELS
+from config.manager import MODELS_META, METRICS, MODELS, HEADERS
 from datetime import datetime, timedelta
 from utils.utils import gen_id
 from schemas.models import GetModelResponse
@@ -12,7 +12,16 @@ def create_models_for_training(
     training_id: str, dataset_id: str, model_names: list[str], training_type: str, task: str
 ):
     created = []
-    with open(MODELS_META, "a") as w:
+    exists = MODELS_META.exists()
+    # Use newline="" and csv.writer to avoid extra blank lines on Windows/Unix
+    with MODELS_META.open("a", newline="", encoding="utf-8") as w:
+        writer = csv.writer(w)
+        # If file didn't exist, write header first
+        if not exists:
+            header = HEADERS.get(MODELS_META, "")
+            if header:
+                writer.writerow(header.split(","))
+
         for name in model_names:
             model_id = gen_id("model")
             r = [
@@ -26,7 +35,7 @@ def create_models_for_training(
                 datetime.utcnow().isoformat(),
             ]
             r.extend(["0" for _ in range(METRICS)])
-            w.write("\n" + ",".join(r))
+            writer.writerow(r)
             created.append(model_id)
     return created
 
@@ -44,7 +53,7 @@ def list_models_by_training_id(training_id: str):
     return ids
 
 
-def update_health(model_id: str):
+def update_health(model_id: str, dataset_id: Optional[str] = None) -> bool:
     rows = []
     found = False
     try:
@@ -58,7 +67,7 @@ def update_health(model_id: str):
     health_index = header.index("health")
 
     for i in range(1, len(rows)):
-        if rows[i][0] == model_id:
+        if rows[i][0] == model_id and ((dataset_id is None and rows[i][5] == "training") or rows[i][2] == dataset_id):
             rows[i][health_index] = datetime.utcnow().isoformat()
             found = True
             break
@@ -87,6 +96,12 @@ def find_model_to_run():
                     flag = True
                 if flag or h < limit:
                     dataset_id = row.get("dataset_id", "")
+                    # mark the model as claimed by updating its health timestamp
+                    try:
+                        update_health(row["model_id"], dataset_id)
+                    except Exception:
+                        # if updating health fails, still return the model info
+                        pass
                     return {
                         "model_id": row["model_id"],
                         "dataset_id": dataset_id,

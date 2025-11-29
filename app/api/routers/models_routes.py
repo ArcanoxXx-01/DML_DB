@@ -19,9 +19,9 @@ from api.services.models_services import (
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.get("/health/{model_id}", response_model=ModelHealthUpdateResponse)
-def update_health_endpoint(model_id: str):
-    ok = update_health(model_id)
+@router.get("/health/{model_id}/{dataset_id}", response_model=ModelHealthUpdateResponse)
+def update_health_endpoint(model_id: str, dataset_id: str):
+    ok = update_health(model_id, dataset_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Modelo no encontrado")
     return ModelHealthUpdateResponse(model_id=model_id, health_updated=True)

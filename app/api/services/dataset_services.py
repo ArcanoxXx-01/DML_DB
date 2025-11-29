@@ -4,13 +4,22 @@ from config.manager import DATASETS, DATASETS_META, BATCH_SIZE
 
 
 def save_batches(dataset_id: str, rows: list[list[str]]) -> int:
+    if not rows:
+        return 0
+    
+    headers = rows[0]
+    data_rows = rows[1:]
     batches = 0
-    for i in range(0, len(rows), BATCH_SIZE):
-        batch_rows = rows[i : i + BATCH_SIZE]
+    
+    for i in range(0, len(data_rows), BATCH_SIZE):
+        batch_rows = data_rows[i : i + BATCH_SIZE]
         batch_file = DATASETS / f"{dataset_id}_batch_{batches}.csv"
         with batch_file.open("w", newline="") as f:
-            csv.writer(f).writerows(batch_rows)
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(batch_rows)
         batches += 1
+    
     return batches
 
 

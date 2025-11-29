@@ -1,6 +1,7 @@
 import time, uuid
 from typing import List, Optional
 from datetime import datetime
+import csv
 from config.manager import (
     _DATA_PATH_,
     DATASETS,
@@ -9,6 +10,7 @@ from config.manager import (
     MODELS,
     MODELS_META,
     HEADERS,
+    PREDICTIONS
 )
 
 
@@ -32,12 +34,31 @@ def ensure_paths_exists():
     _DATA_PATH_.mkdir(exist_ok=True)
     DATASETS.mkdir(exist_ok=True)
     MODELS.mkdir(exist_ok=True)
+    PREDICTIONS.mkdir(exist_ok=True)
     files = [DATASETS_META, TRAININGS_META, MODELS_META]
     for f in files:
+        header = HEADERS.get(f, "")
+        # If file doesn't exist, create and write header using csv to ensure newline correctness
         if not f.exists():
-            with open(f, "a") as w:
-                w.write(HEADERS[f])
-                w.close()
+            with f.open("w", newline="", encoding="utf-8") as w:
+                if header:
+                    writer = csv.writer(w)
+                    writer.writerow(header.split(","))
+        else:
+            # If file exists but header and first row are concatenated without a newline,
+            # fix it by inserting a newline after the header string.
+            try:
+                with f.open("r", encoding="utf-8") as r:
+                    content = r.read()
+                if header and content.startswith(header) and len(content) > len(header):
+                    next_char = content[len(header):len(header)+1]
+                    if next_char not in ("\n", "\r"):
+                        fixed = content[:len(header)] + "\n" + content[len(header):]
+                        with f.open("w", encoding="utf-8", newline="") as w:
+                            w.write(fixed)
+            except Exception:
+                # If any error occurs while repairing, skip to avoid breaking startup
+                pass
 
 # def get_dataset_id(training_id: str):
 #     with open(TRAININGS_META, 'r')as r:

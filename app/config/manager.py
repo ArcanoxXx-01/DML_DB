@@ -1,8 +1,8 @@
 from pathlib import Path
 
-# ===== CONSTATNTS =====
+# ===== CONSTANTS =====
 
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 METRICS = 10
 
 MEMBERSHIPS_TIME_REFRESH = 10
@@ -14,6 +14,7 @@ _DATA_PATH_ = Path("./data")
 DATASETS = _DATA_PATH_ / "datasets"
 DATASETS_META = _DATA_PATH_ / "datasets.csv"
 MODELS = _DATA_PATH_ / "models"
+PREDICTIONS = _DATA_PATH_ / "predictions"
 MODELS_META = _DATA_PATH_ / "models.csv"
 TRAININGS_META = _DATA_PATH_ / "trainings.csv"
 
