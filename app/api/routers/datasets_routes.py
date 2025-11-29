@@ -8,7 +8,7 @@ from api.services.dataset_services import (
     list_meta,
 )
 import csv
-
+from config.manager import middleware
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -22,6 +22,8 @@ async def upload_dataset(dataset_id: str = Body(...), file: UploadFile = File(..
         raise HTTPException(status_code=400, detail="CSV vacío")
     batches = save_batches(dataset_id, rows)
     update_meta(dataset_id, batches)
+    middleware.peer_metadata.update_csv('datasets.csv', middleware._get_own_ip())
+    
     return DatasetUploadResponse(dataset_id=dataset_id, batches=batches)
 
 

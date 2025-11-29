@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from api.routers import datasets_routes, trainings_routes, models_routes, results_routes, predictions_routes, health_routes
 from config.manager import API
 from utils.utils import ensure_paths_exists
-from core.middleware import Middleware
+from config.manager import middleware
 
 ensure_paths_exists()
-middleware = Middleware(timeout=30.0)
+
 
 def create_app():
     app = FastAPI()

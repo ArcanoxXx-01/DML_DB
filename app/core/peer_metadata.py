@@ -8,8 +8,8 @@ class PeerMetadata:
     def __init__(self, node_id: str):
         self.node_id = node_id
         self.lock = threading.Lock()
-        # dataset_id -> batch_id -> set(node_id)
-        self.dataset_batches: Dict[str, Dict[str, Set[str]]] = {}
+        # dataset_id -> set(node_id)
+        self.datasets: Dict[str, Set[str]] = {}
         # model_id -> set(node_id)
         self.model_jsons: Dict[str, Set[str]] = {}
         # (model_id, dataset_id) -> set(node_id)
@@ -21,13 +21,11 @@ class PeerMetadata:
             'trainings.csv': set()
         }
 
-    def update_batch(self, dataset_id: str, batch_id: str, node_id: str):
+    def update_dataset(self, dataset_id: str, node_id: str):
         with self.lock:
-            if dataset_id not in self.dataset_batches:
-                self.dataset_batches[dataset_id] = {}
-            if batch_id not in self.dataset_batches[dataset_id]:
-                self.dataset_batches[dataset_id][batch_id] = set()
-            self.dataset_batches[dataset_id][batch_id].add(node_id)
+            if dataset_id not in self.datasets:
+                self.datasets[dataset_id] = set()
+            self.datasets[dataset_id].add(node_id)
 
     def update_model(self, model_id: str, node_id: str):
         with self.lock:
@@ -47,8 +45,8 @@ class PeerMetadata:
             if csv_name in self.csvs:
                 self.csvs[csv_name].add(node_id)
 
-    def get_batches(self, dataset_id: str, batch_id: str) -> Set[str]:
-        return self.dataset_batches.get(dataset_id, {}).get(batch_id, set())
+    def get_dataset_nodes(self, dataset_id: str) -> Set[str]:
+        return self.datasets.get(dataset_id, set())
 
     def get_model_nodes(self, model_id: str) -> Set[str]:
         return self.model_jsons.get(model_id, set())

@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 import random
 
+from app.core.peer_metadata import PeerMetadata
+
 
 class Middleware:
     """Middleware class for sending HTTP requests with Pydantic schema validation and IP caching."""
@@ -22,15 +24,17 @@ class Middleware:
         self.service_type = "db"
         self.timeout = timeout
         self.health_check_timeout = health_check_timeout
+        self.own_ip = self._get_own_ip()
         self.ip_cache: dict[str, List[str]] = {}
         self.monitoring_thread: Optional[threading.Thread] = None
         self.stop_monitoring = threading.Event()
         self.discovery_thread: Optional[threading.Thread] = None
         self.stop_discovery = threading.Event()
         self.cache_lock = threading.Lock()
-        
-        print("Middleware initialized with own IP:", self._get_own_ip())
-    
+        self.peer_metadata: PeerMetadata = PeerMetadata(self.own_ip)
+
+        print("Middleware initialized with own IP:", self.own_ip)
+
     def _resolve_domain_ips(self, domain: str) -> List[str]:
         """
         Resolve domain to list of IP addresses using DNS lookup.
@@ -217,4 +221,12 @@ class Middleware:
         if self.discovery_thread and self.discovery_thread.is_alive():
             self.discovery_thread.join(timeout=15.0)
             print(f"[stop_monitoring_thread] IP discovery thread stopped")
+
+    def replicate_dataset(self, dataset_id: str):
+        pass
+
+    def replicate_training(self, training_id: str):
+        pass
+
+        
         

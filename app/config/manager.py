@@ -1,4 +1,5 @@
 from pathlib import Path
+from core.middleware import Middleware
 
 # ===== CONSTANTS =====
 
@@ -31,3 +32,5 @@ HEADERS = {
 IP = "127.0.0.0"
 PORT = "8000"
 API = "/api/v1"
+
+middleware = Middleware(timeout=30.0)
