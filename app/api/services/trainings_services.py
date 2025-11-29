@@ -15,14 +15,20 @@ def create_training(
     task = "training"
     created_at = datetime.now().isoformat()
     status = "pending"
-    with open(TRAININGS_META, "a") as w:
-        w.write(
-            "\n"
-            + ",".join(
-                [training_id, dataset_id, training_type, task, status, created_at]
+    # Use Path.open with newline="" and csv.writer to avoid extra blank lines
+    try:
+        exists = TRAININGS_META.exists()
+    except Exception:
+        exists = False
+
+    with TRAININGS_META.open("a", newline="", encoding="utf-8") as w:
+        writer = csv.writer(w)
+        if not exists:
+            # write header if the file didn't exist
+            writer.writerow(
+                ["training_id", "dataset_id", "training_type", "task", "status", "created_at"]
             )
-        )
-        w.close()
+        writer.writerow([training_id, dataset_id, training_type, task, status, created_at])
     created_models = create_models_for_training(
         training_id=training_id,
         dataset_id=dataset_id,
