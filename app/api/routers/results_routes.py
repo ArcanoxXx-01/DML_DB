@@ -13,6 +13,7 @@ def create_results_endpoint(req: ResultsCreateRequest = Body(...)):
     data = req.model_dump()
     resp = save_results(**data)
     if not resp.get("saved"):
+        print("###################################",resp.get("reason", "failed to save results"))
         raise HTTPException(status_code=400, detail=resp.get("reason", "failed to save results"))
     return ResultsResponse(training_id=resp["training_id"], model_id=resp["model_id"], results=resp["results"])
 

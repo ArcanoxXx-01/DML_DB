@@ -1,8 +1,8 @@
 from pathlib import Path
 
-# ===== CONSTATNTS =====
+# ===== CONSTANTS =====
 
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 METRICS = 10
 
 MEMBERSHIPS_TIME_REFRESH = 10
