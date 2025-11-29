@@ -22,3 +22,7 @@ python3 tests.py
 
 docker build -t dml_db_image .
 docker run -d --name dml_db_container --network dml-network --network-alias db -p 8000:8000 dml_db_image
+docker run -d --name dml_db_container2 --network dml-network --network-alias db -p 7999:8000 dml_db_image
+docker run -d --name dml_db_container3 --network dml-network --network-alias db -p 7998:8000 dml_db_image
+docker run -d --name dml_db_container4 --network dml-network --network-alias db -p 7997:8000 dml_db_image
+docker run -d --name dml_db_container5 --network dml-network --network-alias db -p 7996:8000 dml_db_image
