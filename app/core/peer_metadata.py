@@ -487,8 +487,8 @@ class PeerMetadata:
             except Exception as e:
                 print(f"[_sync_loop] Error in sync loop: {e}")
 
-            # sleep 10 seconds
-            self._stop_sync.wait(10.0)
+            # sleep 7 seconds
+            self._stop_sync.wait(7.0)
 
     def start_sync(self, middleware):
         """Start the background sync thread. Call from the Middleware after startup."""

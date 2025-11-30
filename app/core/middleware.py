@@ -440,10 +440,69 @@ class Middleware:
             except Exception as e:
                 print(f"[_discover_ips] Error during IP refresh: {e}")
 
-            # Wait 2 seconds or until stop signal
-            self.stop_discovery.wait(2.0)
+            # Wait 3 seconds or until stop signal
+            self.stop_discovery.wait(3.0)
         
         print(f"[_discover_ips] IP discovery thread stopped")
+
+    def _replication_monitor(self, interval: float = 20.0):
+        """
+        Background thread that periodically checks peer metadata for datasets
+        and models that are under the replication factor. If this node is the
+        smallest ("menor") among the current holders and this node actually
+        holds the resource, it will initiate re-replication.
+        """
+        print(f"[_replication_monitor] Replication monitor thread started")
+
+        # Allow service to settle
+        print(f"[_replication_monitor] Waiting 5 seconds for startup...")
+        self.stop_monitoring.wait(5.0)
+
+        while not self.stop_monitoring.is_set():
+            try:
+                # Snapshot keys under lock to avoid long lock holding
+                with self.peer_metadata.lock:
+                    dataset_ids = list(self.peer_metadata.datasets.keys())
+                    model_ids = list(self.peer_metadata.model_jsons.keys())
+
+                # Check datasets
+                for dataset_id in dataset_ids:
+                    try:
+                        holders = self.peer_metadata.get_dataset_nodes(dataset_id)
+                        if not holders:
+                            continue
+                        if len(holders) < self.REPLICATION_FACTOR:
+                            # Responsibility: only the smallest holder in the set triggers re-replication
+                            if self.own_ip in holders and self.own_ip == min(holders):
+                                print(f"[_replication_monitor] This node is responsible for dataset {dataset_id}; initiating re-replication")
+                                self.check_and_rereplicate_datasets({dataset_id})
+                            else:
+                                print(f"[_replication_monitor] Dataset {dataset_id} under-replicated but this node is not the responsible holder")
+                    except Exception as e:
+                        print(f"[_replication_monitor] Error checking dataset {dataset_id}: {e}")
+
+                # Check models
+                for model_id in model_ids:
+                    try:
+                        holders = self.peer_metadata.get_model_nodes(model_id)
+                        if not holders:
+                            continue
+                        if len(holders) < self.REPLICATION_FACTOR:
+                            if self.own_ip in holders and self.own_ip == min(holders):
+                                print(f"[_replication_monitor] This node is responsible for model {model_id}; initiating re-replication")
+                                self.check_and_rereplicate_models({model_id})
+                            else:
+                                print(f"[_replication_monitor] Model {model_id} under-replicated but this node is not the responsible holder")
+                    except Exception as e:
+                        print(f"[_replication_monitor] Error checking model {model_id}: {e}")
+
+            except Exception as e:
+                print(f"[_replication_monitor] Unexpected error during monitor loop: {e}")
+
+            # Wait interval or until stopped
+            self.stop_monitoring.wait(interval)
+
+        print(f"[_replication_monitor] Replication monitor thread stopped")
     
     def start_monitoring(self):
         """
@@ -464,6 +523,18 @@ class Middleware:
             self.peer_metadata.start_sync(self)
         except Exception as e:
             print(f"[start_monitoring] Error starting peer metadata sync: {e}")
+        
+        # Start replication monitor thread
+        if self.monitoring_thread is None or not self.monitoring_thread.is_alive():
+            try:
+                print(f"[start_monitoring] Starting replication monitor thread")
+                self.stop_monitoring.clear()
+                self.monitoring_thread = threading.Thread(target=self._replication_monitor, daemon=True)
+                self.monitoring_thread.start()
+            except Exception as e:
+                print(f"[start_monitoring] Error starting replication monitor thread: {e}")
+        else:
+            print(f"[start_monitoring] Replication monitor thread already running")
     
     def stop_monitoring_thread(self):
         """
@@ -483,6 +554,16 @@ class Middleware:
             self.peer_metadata.stop_sync()
         except Exception as e:
             print(f"[stop_monitoring_thread] Error stopping peer metadata sync: {e}")
+
+        # Stop replication monitor thread
+        try:
+            print(f"[stop_monitoring_thread] Stopping replication monitor thread")
+            self.stop_monitoring.set()
+            if self.monitoring_thread and self.monitoring_thread.is_alive():
+                self.monitoring_thread.join(timeout=15.0)
+                print(f"[stop_monitoring_thread] Replication monitor thread stopped")
+        except Exception as e:
+            print(f"[stop_monitoring_thread] Error stopping replication monitor thread: {e}")
 
     def get_healthy_peers(self) -> List[str]:
         """Returns a list of alive IPs excluding self."""
