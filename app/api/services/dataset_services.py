@@ -46,3 +46,24 @@ def list_meta():
     with DATASETS_META.open("r") as f:
         reader = csv.DictReader(f)
         return [row["dataset_id"] for row in reader]
+
+def append_to_csv_file(row: list[str], file_path: Path = DATASETS_META):
+    """
+    Appends a row to the CSV file if the ID (first column) does not already exist.
+    Used primarily for syncing metadata from other peers.
+    """
+    dataset_id = row[0]
+    
+    # 1. Read existing to prevent duplicates
+    if file_path.exists():
+        with file_path.open("r") as f:
+            reader = csv.reader(f)
+            for existing_row in reader:
+                # If dataset_id matches, we already have this record.
+                if existing_row and existing_row[0] == dataset_id:
+                    return 
+
+    # 2. Append if strictly new
+    with file_path.open("a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(row)

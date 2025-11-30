@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 import random
 
-from app.core.peer_metadata import PeerMetadata
+from core.peer_metadata import PeerMetadata
 
 
 class Middleware:
@@ -32,6 +32,7 @@ class Middleware:
         self.stop_discovery = threading.Event()
         self.cache_lock = threading.Lock()
         self.peer_metadata: PeerMetadata = PeerMetadata(self.own_ip)
+        self.REPLICATION_FACTOR = 3
 
         print("Middleware initialized with own IP:", self.own_ip)
 
@@ -222,11 +223,77 @@ class Middleware:
             self.discovery_thread.join(timeout=15.0)
             print(f"[stop_monitoring_thread] IP discovery thread stopped")
 
-    def replicate_dataset(self, dataset_id: str):
-        pass
-
-    def replicate_training(self, training_id: str):
-        pass
-
+    def get_healthy_peers(self) -> List[str]:
+        """Returns a list of alive IPs excluding self."""
+        domain = self.service_type
+        # Ensure cache is populated
+        if domain not in self.ip_cache:
+            self._refresh_service_ip_cahe()
+            
+        alive_ips = []
+        with self.cache_lock:
+            candidates = self.ip_cache.get(domain, [])
         
+        for ip in candidates:
+            # Skip self and check health
+            if ip != self.own_ip and self.check_ip_alive(ip):
+                alive_ips.append(ip)
+        return alive_ips
+
+    def replicate_dataset(self, dataset_id: str, file_content: bytes):
+        """
+        Ensures the dataset exists on at least (REPLICATION_FACTOR) nodes.
+        Coordinate: Decide who gets the data based on who doesn't have it yet.
+        """
+        # 1. Update own state first
+        self.peer_metadata.update_dataset(dataset_id, self.own_ip)
+        
+        # 2. Get current holders (including self)
+        current_holders = self.peer_metadata.get_dataset_nodes(dataset_id)
+        current_count = len(current_holders)
+        
+        needed = self.REPLICATION_FACTOR - current_count
+        
+        if needed <= 0:
+            print(f"[Replication] Dataset {dataset_id} satisfies RF={self.REPLICATION_FACTOR}. No action needed.")
+            return
+
+        print(f"[Replication] Dataset {dataset_id} needs {needed} more copies.")
+
+        # 3. Find candidates (Healthy IPs that are NOT in current_holders)
+        all_peers = self.get_healthy_peers()
+        candidates = [ip for ip in all_peers if ip not in current_holders]
+
+        if not candidates:
+            print("[Replication] No available candidates found to replicate to.")
+            return
+
+        # 4. Coordinate: Randomly select targets to balance load
+        # If we need 2 but have 5 candidates, pick 2 random ones.
+        targets = random.sample(candidates, min(needed, len(candidates)))
+        
+        print(f"[Replication] Selected targets: {targets}")
+
+        # 5. Send data
+        files = {'file': (f"{dataset_id}.csv", file_content, "text/csv")}
+        
+        for ip in targets:
+            try:
+                print(f"[Replication] Sending {dataset_id} to {ip}...")
+                # We call a specific replication endpoint on the peer
+                # Reset file pointer for each request if needed, or send bytes directly
+                response = requests.post(
+                    f"http://{ip}:8000/api/v1/datasets/replicate",
+                    data={"dataset_id": dataset_id},
+                    files={'file': file_content}, # Requests handles bytes automatically
+                    timeout=self.timeout
+                )
+                if response.status_code == 200:
+                    print(f"[Replication] Successfully replicated to {ip}")
+                    # Update local metadata knowledge immediately
+                    self.peer_metadata.update_dataset(dataset_id, ip)
+                else:
+                    print(f"[Replication] Failed to send to {ip}: {response.text}")
+            except Exception as e:
+                print(f"[Replication] Error sending to {ip}: {e}")
         
