@@ -230,7 +230,7 @@ class Middleware:
             try:
                 print(f"[cleanup_dead_peers] Removing peer {ip} from PeerMetadata")
                 # Get datasets this peer had before removing
-                datasets_on_peer = self.peer_metadata.get_datasets_by_node(ip)
+                datasets_on_peer = self.peer_metadata.get_datasets_by_node_for_own_ip(ip, own_ip=self.own_ip)
                 affected_datasets.update(datasets_on_peer)
                 
                 self.peer_metadata.remove_peer(ip)
@@ -293,28 +293,56 @@ class Middleware:
     def load_dataset_content(self, dataset_id: str) -> Optional[bytes]:
         """
         Load dataset content from local storage.
-        This method should be implemented based on your storage mechanism.
+        Reads all batch CSV files, keeping only the header from batch_0.
         
         Args:
             dataset_id: ID of the dataset to load
             
         Returns:
-            Dataset file content as bytes, or None if not found
+            Combined dataset file content as bytes, or None if not found
         """
         try:
-            # TODO: Implement based on your actual storage location
-            # Example: read from ./data/datasets/{dataset_id}.csv
             import os
-            filepath = f"./data/datasets/{dataset_id}.csv"
+            import glob
+            from config.manager import DATASETS
             
-            if os.path.exists(filepath):
-                with open(filepath, 'rb') as f:
-                    return f.read()
-            else:
-                print(f"[load_dataset_content] Dataset file not found: {filepath}")
+            dataset_dir = DATASETS
+            
+            # Find all batch files for this dataset
+            pattern = os.path.join(dataset_dir, f"{dataset_id}_batch_*.csv")
+            batch_files = sorted(glob.glob(pattern), key=lambda x: int(x.split('_batch_')[1].split('.')[0]))
+            
+            if not batch_files:
+                print(f"[load_dataset_content] No batch files found for dataset {dataset_id}")
                 return None
+            
+            print(f"[load_dataset_content] Found {len(batch_files)} batch files for dataset {dataset_id}")
+            
+            # Combine all batches
+            combined_lines = []
+            
+            for i, batch_file in enumerate(batch_files):
+                with open(batch_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    
+                    if i == 0:
+                        # First batch: include header + data
+                        combined_lines.extend(lines)
+                    else:
+                        # Other batches: skip header (first line), only add data
+                        if len(lines) > 1:
+                            combined_lines.extend(lines[1:])
+            
+            # Convert back to bytes
+            result = ''.join(combined_lines).encode('utf-8')
+            print(f"[load_dataset_content] Combined {len(batch_files)} batches into {len(result)} bytes")
+            
+            return result
+            
         except Exception as e:
             print(f"[load_dataset_content] Error loading dataset {dataset_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         
     
@@ -349,9 +377,9 @@ class Middleware:
                 self._refresh_service_ip_cahe()
             except Exception as e:
                 print(f"[_discover_ips] Error during IP refresh: {e}")
-            
-            # Wait 10 seconds or until stop signal
-            self.stop_discovery.wait(10.0)
+
+            # Wait 5 seconds or until stop signal
+            self.stop_discovery.wait(5.0)
         
         print(f"[_discover_ips] IP discovery thread stopped")
     

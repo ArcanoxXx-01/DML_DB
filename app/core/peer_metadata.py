@@ -81,7 +81,7 @@ class PeerMetadata:
                     datasets_on_node.add(dataset_id)
             return datasets_on_node
 
-    def get_datasets_by_node(self, node_id: str, own_ip: str = None) -> Set[str]:
+    def get_datasets_by_node_for_own_ip(self, node_id: str, own_ip: str = None) -> Set[str]:
         """
         Get all dataset IDs that a specific node has.
 
@@ -229,8 +229,8 @@ class PeerMetadata:
             except Exception:
                 pass
 
-            # sleep 1 second as requested
-            self._stop_sync.wait(1.0)
+            # sleep 7 seconds as requested
+            self._stop_sync.wait(7.0)
 
     def start_sync(self, middleware):
         """Start the background sync thread. Call from the Middleware after startup."""
