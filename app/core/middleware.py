@@ -7,6 +7,8 @@ from datetime import datetime
 import random
 
 from core.peer_metadata import PeerMetadata
+import json
+from api.services.models_services import load_model
 
 
 class Middleware:
@@ -222,8 +224,9 @@ class Middleware:
             
         print(f"[cleanup_dead_peers] Cleaning up {len(dead_ips)} dead peer(s): {dead_ips}")
         
-        # Track which datasets were affected
+        # Track which datasets and models were affected
         affected_datasets = set()
+        affected_models = set()
         
         # Remove dead peers from peer metadata
         for ip in dead_ips:
@@ -232,15 +235,26 @@ class Middleware:
                 # Get datasets this peer had before removing
                 datasets_on_peer = self.peer_metadata.get_datasets_by_node_for_own_ip(ip, own_ip=self.own_ip)
                 affected_datasets.update(datasets_on_peer)
-                
+
+                # models held by this peer (collect before removal)
+                models_on_peer = set()
+                with self.peer_metadata.lock:
+                    for model_id, holders in self.peer_metadata.model_jsons.items():
+                        if ip in holders:
+                            models_on_peer.add(model_id)
+                affected_models.update(models_on_peer)
+
                 self.peer_metadata.remove_peer(ip)
             except Exception as e:
                 print(f"[cleanup_dead_peers] Error removing peer {ip} from metadata: {e}")
         
-        # Check and re-replicate affected datasets
+        # Check and re-replicate affected datasets and models
         if affected_datasets:
             print(f"[cleanup_dead_peers] {len(affected_datasets)} dataset(s) potentially affected: {affected_datasets}")
             self.check_and_rereplicate_datasets(affected_datasets)
+        if affected_models:
+            print(f"[cleanup_dead_peers] {len(affected_models)} model(s) potentially affected: {affected_models}")
+            self.check_and_rereplicate_models(affected_models)
         else:
             print(f"[cleanup_dead_peers] No datasets affected by peer removal")
 
@@ -289,6 +303,51 @@ class Middleware:
             else:
                 print(f"[check_and_rereplicate_datasets] Dataset {dataset_id} has sufficient replicas: "
                       f"{current_count}/{self.REPLICATION_FACTOR}")
+                
+    def check_and_rereplicate_models(self, model_ids: set = None):
+        """
+        Check replication factor for models and re-replicate if needed.
+
+        Args:
+            model_ids: Optional set of specific model IDs to check. If None, checks all known models.
+        """
+        if model_ids is None:
+            model_ids = set(self.peer_metadata.model_jsons.keys())
+
+        if not model_ids:
+            print("[check_and_rereplicate_models] No models to check")
+            return
+
+        print(f"[check_and_rereplicate_models] Checking {len(model_ids)} model(s)")
+
+        for model_id in model_ids:
+            current_holders = self.peer_metadata.get_model_nodes(model_id)
+            current_count = len(current_holders)
+            needed = self.REPLICATION_FACTOR - current_count
+
+            if needed > 0:
+                print(f"[check_and_rereplicate_models] Model {model_id} is under-replicated: "
+                      f"{current_count}/{self.REPLICATION_FACTOR} copies. Need {needed} more.")
+
+                # If this node has the model, initiate replication
+                if self.own_ip in current_holders:
+                    print(f"[check_and_rereplicate_models] This node has {model_id}, initiating re-replication")
+                    try:
+                        resp = load_model(model_id)
+                        if resp and isinstance(resp, dict) and "model_data" in resp:
+                            try:
+                                model_bytes = json.dumps(resp["model_data"]).encode("utf-8")
+                                self.replicate_model_json(model_id, model_bytes)
+                            except Exception as e:
+                                print(f"[check_and_rereplicate_models] Error serializing model {model_id}: {e}")
+                        else:
+                            print(f"[check_and_rereplicate_models] Could not load model {model_id} for re-replication")
+                    except Exception as e:
+                        print(f"[check_and_rereplicate_models] Error re-replicating model {model_id}: {e}")
+                else:
+                    print(f"[check_and_rereplicate_models] This node doesn't have {model_id}, held by: {current_holders}")
+            else:
+                print(f"[check_and_rereplicate_models] Model {model_id} has sufficient replicas: {current_count}/{self.REPLICATION_FACTOR}")
                 
     def load_dataset_content(self, dataset_id: str) -> Optional[bytes]:
         """
@@ -495,4 +554,56 @@ class Middleware:
                     print(f"[Replication] Failed to send to {ip}: {response.text}")
             except Exception as e:
                 print(f"[Replication] Error sending to {ip}: {e}")
+
+    def replicate_model_json(self, model_id: str, model_json: bytes):
+        """
+        Ensure the model JSON exists on at least `REPLICATION_FACTOR` nodes.
+        Similar to `replicate_dataset` but for model JSONs.
+        """
+        # 1. Update own state first
+        try:
+            self.peer_metadata.update_model(model_id, self.own_ip)
+        except Exception:
+            pass
+
+        # 2. Get current holders (including self)
+        current_holders = self.peer_metadata.get_model_nodes(model_id)
+        current_count = len(current_holders)
+        needed = self.REPLICATION_FACTOR - current_count
+
+        if needed <= 0:
+            print(f"[Model-Replication] Model {model_id} satisfies RF={self.REPLICATION_FACTOR}. No action needed.")
+            return
+
+        print(f"[Model-Replication] Model {model_id} needs {needed} more copies.")
+
+        # 3. Find candidates (Healthy IPs that are NOT in current_holders)
+        all_peers = self.get_healthy_peers()
+        candidates = [ip for ip in all_peers if ip not in current_holders]
+
+        if not candidates:
+            print("[Model-Replication] No available candidates found to replicate to.")
+            return
+
+        # 4. Select targets
+        targets = random.sample(candidates, min(needed, len(candidates)))
+        print(f"[Model-Replication] Selected targets: {targets}")
+
+        # 5. Send model JSON to targets
+        for ip in targets:
+            try:
+                print(f"[Model-Replication] Sending model {model_id} to {ip}...")
+                response = requests.post(
+                    f"http://{ip}:8000/api/v1/models/replicate",
+                    data={"model_id": model_id, "nodes_ips": targets},
+                    files={"file": (f"{model_id}.json", model_json, "application/json")},
+                    timeout=self.timeout,
+                )
+                if response.status_code == 200:
+                    print(f"[Model-Replication] Successfully replicated to {ip}")
+                    self.peer_metadata.update_model(model_id, ip)
+                else:
+                    print(f"[Model-Replication] Failed to send to {ip}: {response.text}")
+            except Exception as e:
+                print(f"[Model-Replication] Error sending to {ip}: {e}")
         

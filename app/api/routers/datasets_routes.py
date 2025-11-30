@@ -1,6 +1,7 @@
 from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException, Body, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+import requests
 from schemas.datasets import DatasetUploadResponse
 from api.services.dataset_services import (
     save_batches,
@@ -80,10 +81,53 @@ async def receive_replication(
 
 @router.get("/{dataset_id}/{batch}")
 def get_batch(dataset_id: str, batch: int):
-    batch_file = get_batch_file(dataset_id, batch)
-    if not batch_file.exists():
-        raise HTTPException(status_code=404, detail="Batch no encontrado")
-    return FileResponse(batch_file)
+    # Check peer metadata first: if this node is a known holder, serve local file
+    holders = middleware.peer_metadata.get_dataset_nodes(dataset_id)
+    own_ip = middleware._get_own_ip()
+
+    if own_ip in holders:
+        batch_file = get_batch_file(dataset_id, batch)
+        if not batch_file.exists():
+            # Metadata says we have it but file missing
+            raise HTTPException(status_code=404, detail="Batch no encontrado (metadata inconsistency)")
+        return FileResponse(batch_file)
+
+    # Otherwise, try to find a peer that has the dataset and proxy the request
+    # Prefer healthy peers
+    if not holders:
+        raise HTTPException(status_code=404, detail="Dataset no encontrado en la red")
+
+    last_error = None
+    for holder in holders:
+        # skip self just in case
+        if holder == own_ip:
+            continue
+        # Quick health check using middleware helper
+        try:
+            if not middleware.check_ip_alive(holder):
+                continue
+        except Exception:
+            # If the health check itself fails, skip this holder
+            continue
+
+        try:
+            url = f"http://{holder}:8000/api/v1/datasets/{dataset_id}/{batch}"
+            resp = requests.get(url, stream=True, timeout=10)
+            if resp.status_code == 200:
+                # Stream the response back to the client preserving content-type
+                content_type = resp.headers.get("Content-Type", "application/octet-stream")
+                return StreamingResponse(resp.iter_content(chunk_size=8192), media_type=content_type)
+            else:
+                last_error = f"peer {holder} returned status {resp.status_code}"
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            continue
+
+    # If we reach here, none of the holders responded successfully
+    detail = "No se pudo obtener el batch desde los peers"
+    if last_error:
+        detail += f": {last_error}"
+    raise HTTPException(status_code=502, detail=detail)
 
 
 @router.get("/list")
