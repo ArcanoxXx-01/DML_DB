@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from api.routers import datasets_routes, trainings_routes, models_routes, results_routes, predictions_routes, health_routes
+from api.routers import datasets_routes, trainings_routes, models_routes, results_routes, predictions_routes, health_routes, peers_routes
 from config.manager import API
 from utils.utils import ensure_paths_exists
 from config.manager import middleware
@@ -15,6 +15,7 @@ def create_app():
     app.include_router(results_routes.router, prefix=API)
     app.include_router(predictions_routes.router, prefix=API)
     app.include_router(health_routes.router, prefix=API)
+    app.include_router(peers_routes.router, prefix=API)
 
     @app.on_event("startup")
     async def startup_event():

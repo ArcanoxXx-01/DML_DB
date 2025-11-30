@@ -141,7 +141,13 @@ class Middleware:
         Returns:
             Dictionary mapping IP addresses to their alive status (True/False)
         """
+        print(f"\n{'='*80}")
         print(f"[check_cache_ips_alive] Checking cached IPs for domain: {domain}")
+        print(f"{'='*80}")
+        
+        # Print current datasets state BEFORE checking
+        self._print_datasets_state("INITIAL STATE")
+        
         results = {}
         
         with self.cache_lock:
@@ -152,15 +158,166 @@ class Middleware:
             # Create a copy to avoid modification during iteration
             ips_to_check = self.ip_cache[domain].copy()
         
-        print(f"[check_cache_ips_alive] Found {len(ips_to_check)} IPs to check: {ips_to_check}")
+        print(f"\n[check_cache_ips_alive] Found {len(ips_to_check)} IPs to check: {ips_to_check}")
         for ip in ips_to_check:
             is_alive = self.check_ip_alive(ip, port, health_path, remove_if_dead=remove_dead)
             results[ip] = is_alive
         
         alive_count = sum(1 for status in results.values() if status)
-        print(f"[check_cache_ips_alive] Results: {alive_count}/{len(results)} IPs alive - {results}")
-        return results
+        print(f"\n[check_cache_ips_alive] Health Check Results: {alive_count}/{len(results)} IPs alive")
+        print(f"[check_cache_ips_alive] Detailed results: {results}")
+
+        dead_ips = [ip for ip, alive in results.items() if not alive]
         
+        if dead_ips:
+            print(f"\n{'─'*80}")
+            print(f"[check_cache_ips_alive] 🔴 DEAD PEERS DETECTED: {dead_ips}")
+            print(f"{'─'*80}")
+            self._print_datasets_state("BEFORE CLEANUP")
+            
+            self.cleanup_dead_peers(dead_ips)
+            
+            self._print_datasets_state("AFTER CLEANUP & RE-REPLICATION")
+            print(f"{'='*80}\n")
+        else:
+            print(f"\n✅ All peers are healthy!\n{'='*80}\n")
+
+        return results
+
+    def _print_datasets_state(self, label: str):
+        """
+        Pretty print the current state of datasets and their replicas.
+        
+        Args:
+            label: Label to identify this state snapshot
+        """
+        print(f"\n📊 DATASETS STATE - {label}")
+        print(f"{'─'*80}")
+        
+        with self.peer_metadata.lock:
+            if not self.peer_metadata.datasets:
+                print("   No datasets tracked yet")
+            else:
+                for dataset_id, nodes in sorted(self.peer_metadata.datasets.items()):
+                    node_list = sorted(list(nodes))
+                    replica_count = len(node_list)
+                    status = "✅" if replica_count >= self.REPLICATION_FACTOR else "⚠️"
+                    
+                    print(f"   {status} Dataset: {dataset_id}")
+                    print(f"      Replicas: {replica_count}/{self.REPLICATION_FACTOR}")
+                    print(f"      Nodes: {node_list}")
+        
+        print(f"{'─'*80}")
+
+    def cleanup_dead_peers(self, dead_ips: List[str]):
+        """
+        Remove dead peers from peer metadata and from cache.
+        After cleanup, check all datasets and re-replicate those that are under-replicated.
+        
+        Args:
+            dead_ips: List of IP addresses that are dead/unreachable
+        """
+        if not dead_ips:
+            return
+            
+        print(f"[cleanup_dead_peers] Cleaning up {len(dead_ips)} dead peer(s): {dead_ips}")
+        
+        # Track which datasets were affected
+        affected_datasets = set()
+        
+        # Remove dead peers from peer metadata
+        for ip in dead_ips:
+            try:
+                print(f"[cleanup_dead_peers] Removing peer {ip} from PeerMetadata")
+                # Get datasets this peer had before removing
+                datasets_on_peer = self.peer_metadata.get_datasets_by_node(ip)
+                affected_datasets.update(datasets_on_peer)
+                
+                self.peer_metadata.remove_peer(ip)
+            except Exception as e:
+                print(f"[cleanup_dead_peers] Error removing peer {ip} from metadata: {e}")
+        
+        # Check and re-replicate affected datasets
+        if affected_datasets:
+            print(f"[cleanup_dead_peers] {len(affected_datasets)} dataset(s) potentially affected: {affected_datasets}")
+            self.check_and_rereplicate_datasets(affected_datasets)
+        else:
+            print(f"[cleanup_dead_peers] No datasets affected by peer removal")
+
+    def check_and_rereplicate_datasets(self, dataset_ids: set = None):
+        """
+        Check replication factor for datasets and re-replicate if needed.
+        
+        Args:
+            dataset_ids: Optional set of specific dataset IDs to check. 
+                        If None, checks all known datasets.
+        """
+        if dataset_ids is None:
+            # Check all datasets in metadata
+            dataset_ids = set(self.peer_metadata.datasets.keys())
+        
+        if not dataset_ids:
+            print("[check_and_rereplicate_datasets] No datasets to check")
+            return
+        
+        print(f"[check_and_rereplicate_datasets] Checking {len(dataset_ids)} dataset(s)")
+        
+        for dataset_id in dataset_ids:
+            current_holders = self.peer_metadata.get_dataset_nodes(dataset_id)
+            current_count = len(current_holders)
+            needed = self.REPLICATION_FACTOR - current_count
+            
+            if needed > 0:
+                print(f"[check_and_rereplicate_datasets] Dataset {dataset_id} is under-replicated: "
+                      f"{current_count}/{self.REPLICATION_FACTOR} copies. Need {needed} more.")
+                
+                # Check if this node has the dataset
+                if self.own_ip in current_holders:
+                    print(f"[check_and_rereplicate_datasets] This node has {dataset_id}, initiating re-replication")
+                    # Load the dataset and replicate
+                    try:
+                        file_content = self.load_dataset_content(dataset_id)
+                        if file_content:
+                            self.replicate_dataset(dataset_id, file_content)
+                        else:
+                            print(f"[check_and_rereplicate_datasets] Could not load dataset {dataset_id} for re-replication")
+                    except Exception as e:
+                        print(f"[check_and_rereplicate_datasets] Error re-replicating {dataset_id}: {e}")
+                else:
+                    print(f"[check_and_rereplicate_datasets] This node doesn't have {dataset_id}, "
+                          f"held by: {current_holders}")
+            else:
+                print(f"[check_and_rereplicate_datasets] Dataset {dataset_id} has sufficient replicas: "
+                      f"{current_count}/{self.REPLICATION_FACTOR}")
+                
+    def load_dataset_content(self, dataset_id: str) -> Optional[bytes]:
+        """
+        Load dataset content from local storage.
+        This method should be implemented based on your storage mechanism.
+        
+        Args:
+            dataset_id: ID of the dataset to load
+            
+        Returns:
+            Dataset file content as bytes, or None if not found
+        """
+        try:
+            # TODO: Implement based on your actual storage location
+            # Example: read from ./data/datasets/{dataset_id}.csv
+            import os
+            filepath = f"./data/datasets/{dataset_id}.csv"
+            
+            if os.path.exists(filepath):
+                with open(filepath, 'rb') as f:
+                    return f.read()
+            else:
+                print(f"[load_dataset_content] Dataset file not found: {filepath}")
+                return None
+        except Exception as e:
+            print(f"[load_dataset_content] Error loading dataset {dataset_id}: {e}")
+            return None
+        
+    
     def _get_own_ip(self) -> str:
         """
         Get the IP address of the current instance.
@@ -210,6 +367,13 @@ class Middleware:
             self.discovery_thread.start()
         else:
             print(f"[start_monitoring] IP discovery thread already running")
+
+        # Start peer metadata syncing thread
+        try:
+            print(f"[start_monitoring] Starting peer metadata sync thread")
+            self.peer_metadata.start_sync(self)
+        except Exception as e:
+            print(f"[start_monitoring] Error starting peer metadata sync: {e}")
     
     def stop_monitoring_thread(self):
         """
@@ -222,6 +386,13 @@ class Middleware:
         if self.discovery_thread and self.discovery_thread.is_alive():
             self.discovery_thread.join(timeout=15.0)
             print(f"[stop_monitoring_thread] IP discovery thread stopped")
+
+        # Stop peer metadata sync thread
+        try:
+            print(f"[stop_monitoring_thread] Stopping peer metadata sync thread")
+            self.peer_metadata.stop_sync()
+        except Exception as e:
+            print(f"[stop_monitoring_thread] Error stopping peer metadata sync: {e}")
 
     def get_healthy_peers(self) -> List[str]:
         """Returns a list of alive IPs excluding self."""
