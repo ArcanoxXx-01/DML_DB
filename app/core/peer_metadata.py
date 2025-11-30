@@ -125,7 +125,6 @@ class PeerMetadata:
             # datasets
             for dataset_id in list(self.datasets.keys()):
                 nodes = self.datasets.get(dataset_id)
-
                 if nodes and node_id in nodes:
                     nodes.discard(node_id)
                     if not nodes:
@@ -163,7 +162,8 @@ class PeerMetadata:
             with open(csv_path, 'r', newline='', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 return list(reader)
-        except Exception:
+        except Exception as e:
+            print(f"Error reading CSV {csv_name}: {e}")
             return []
 
     def write_csv_content(self, csv_name: str, rows: List[List[str]]):
@@ -181,6 +181,7 @@ class PeerMetadata:
             # Update timestamp
             with self.lock:
                 self.csv_timestamps[csv_name] = time.time()
+            print(f"[write_csv_content] Successfully wrote {csv_name} with {len(rows)} rows")
         except Exception as e:
             print(f"Error writing CSV {csv_name}: {e}")
 
@@ -190,6 +191,45 @@ class PeerMetadata:
         if csv_path and csv_path.exists():
             return csv_path.stat().st_mtime
         return 0.0
+
+    def _merge_csv_rows(self, local_rows: List[List[str]], remote_rows: List[List[str]]) -> List[List[str]]:
+        """Merge two CSV row lists, deduplicating by the first three columns.
+
+        Local rows are preserved first; remote rows are appended if their
+        first-three-column key isn't already present. This keeps information from all peers.
+        """
+        if not local_rows and not remote_rows:
+            return []
+        
+        # If one is empty, return the other
+        if not local_rows:
+            return remote_rows
+        if not remote_rows:
+            return local_rows
+        
+        seen = set()
+        merged: List[List[str]] = []
+
+        def key_for(row: List[str]):
+            # Use first 3 columns as unique key (typically: id, name, timestamp or similar)
+            return tuple(row[:3]) if len(row) >= 3 else tuple(row)
+
+        # Add local rows first
+        for row in local_rows:
+            k = key_for(row)
+            if k not in seen:
+                merged.append(row)
+                seen.add(k)
+
+        # Add remote rows that aren't duplicates
+        for row in remote_rows:
+            k = key_for(row)
+            if k not in seen:
+                merged.append(row)
+                seen.add(k)
+
+        print(f"[_merge_csv_rows] Merged {len(local_rows)} local + {len(remote_rows)} remote = {len(merged)} total rows")
+        return merged
 
     # ----- Sync helpers -----
     def to_dict(self) -> Dict[str, Any]:
@@ -221,8 +261,11 @@ class PeerMetadata:
         """Merge metadata received from a peer into local metadata.
 
         The incoming `data` should follow the structure returned by `to_dict()`.
-        For CSVs, use the most recent version based on timestamps.
+        For CSVs, merge content from both local and remote to maintain all data.
         """
+        # First collect merge tasks while holding the lock
+        merge_tasks = []
+        
         with self.lock:
             # datasets
             for dataset_id, nodes in data.get("datasets", {}).items():
@@ -255,11 +298,8 @@ class PeerMetadata:
                     self.csvs[csv_name] = set()
                 self.csvs[csv_name].update(nodes)
 
-            # Merge CSV data - use most recent version
-            # Merge CSV data - combine rows (do not prefer remote by timestamp)
-            # We'll collect merge tasks and perform file I/O outside the lock.
+            # Prepare CSV merge tasks
             csv_data = data.get("csv_data", {})
-            merge_tasks = []
             for csv_name, csv_info in csv_data.items():
                 if csv_name not in self.csvs:
                     continue
@@ -267,44 +307,26 @@ class PeerMetadata:
                 remote_timestamp = csv_info.get('timestamp', 0.0)
                 remote_content = csv_info.get('content', []) or []
 
-                # If remote has content, schedule a merge. Actual file reads/writes
-                # are done outside the lock to avoid blocking other operations.
                 if remote_content:
-                    merge_tasks.append((csv_name, remote_content, remote_timestamp))
-
-    def _write_csv_async(self, csv_name: str, rows: List[List[str]], timestamp: float):
-        """Async helper to write CSV without holding the lock."""
-        self.write_csv_content(csv_name, rows)
-        with self.lock:
-            self.csv_timestamps[csv_name] = timestamp
-
-    def _merge_csv_rows(self, local_rows: List[List[str]], remote_rows: List[List[str]]) -> List[List[str]]:
-        """Merge two CSV row lists, deduplicating by the first three columns.
-
-        Local rows are preserved first; remote rows are appended if their
-        first-three-column key isn't already present. This avoids replacing
-        local data based solely on timestamp and keeps information from all
-        peers.
-        """
-        seen = set()
-        merged: List[List[str]] = []
-
-        def key_for(row: List[str]):
-            return tuple(row[:3])
-
-        for row in (local_rows or []):
-            k = key_for(row)
-            if k not in seen:
-                merged.append(row)
-                seen.add(k)
-
-        for row in (remote_rows or []):
-            k = key_for(row)
-            if k not in seen:
-                merged.append(row)
-                seen.add(k)
-
-        return merged
+                    # Read local content while we have the lock
+                    local_content = self.read_csv_content(csv_name)
+                    merge_tasks.append((csv_name, local_content, remote_content, remote_timestamp))
+        
+        # Now perform the actual merging and file I/O outside the lock
+        for csv_name, local_content, remote_content, remote_timestamp in merge_tasks:
+            try:
+                print(f"[merge_peer_metadata] Merging CSV: {csv_name}")
+                merged_content = self._merge_csv_rows(local_content, remote_content)
+                
+                # Write merged content
+                self.write_csv_content(csv_name, merged_content)
+                
+                # Update our tracking that this node now has this CSV
+                with self.lock:
+                    self.csvs[csv_name].add(self.node_id)
+                    
+            except Exception as e:
+                print(f"[merge_peer_metadata] Error merging CSV {csv_name}: {e}")
 
     def _sync_loop(self):
         """Background loop that every 10 seconds exchanges metadata with healthy peers."""
@@ -331,16 +353,16 @@ class PeerMetadata:
                                 # remote may include their metadata, merge it
                                 if isinstance(remote, dict):
                                     self.merge_peer_metadata(remote)
-                            except Exception:
-                                pass
-                    except Exception:
+                            except Exception as e:
+                                print(f"[_sync_loop] Error parsing response from {peer}: {e}")
+                    except Exception as e:
                         # ignore per-peer errors
-                        pass
-            except Exception:
-                pass
+                        print(f"[_sync_loop] Error syncing with {peer}: {e}")
+            except Exception as e:
+                print(f"[_sync_loop] Error in sync loop: {e}")
 
-            # sleep 10 seconds
-            self._stop_sync.wait(10.0)
+            # sleep 2 seconds
+            self._stop_sync.wait(2.0)
 
     def start_sync(self, middleware):
         """Start the background sync thread. Call from the Middleware after startup."""
@@ -349,9 +371,11 @@ class PeerMetadata:
             self._stop_sync.clear()
             self._sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
             self._sync_thread.start()
+            print("[start_sync] Peer metadata sync thread started")
 
     def stop_sync(self):
         """Stop the background sync thread if running."""
         self._stop_sync.set()
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=5.0)
+            print("[stop_sync] Peer metadata sync thread stopped")

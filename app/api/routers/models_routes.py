@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, HTTPException, Body, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, BackgroundTasks, Request, Form
 from fastapi.responses import JSONResponse
 import json
 import requests
@@ -112,16 +112,31 @@ def save_and_replicate_model_endpoint(
     Save model and trigger replication to peers in background.
     This replaces the simple save endpoint to also replicate the model JSON.
     """
-    ok = save_model_file(model_id, req.update, req.model_data)
-    print("[Save-Model] Saved model locally:", model_id)
-    if not ok:
-        raise HTTPException(status_code=500, detail="No se pudo guardar el modelo")
+    # If this is an update, only accept it if we already have the model according
+    # to peer metadata. Do not create new model files on update if we didn't
+    # previously have the model.
 
-    # Update local peer metadata saying we have the model
-    try:
-        middleware.peer_metadata.update_model(model_id, middleware._get_own_ip())
-    except Exception:
-        pass
+    if not req.update:
+        # New model: just save it
+        ok = save_model_file(model_id, req.update, req.model_data)
+        print("[Save-Model] Saved model locally:", model_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="No se pudo guardar el modelo")
+
+        # Update local peer metadata saying we have the model
+        try:
+            middleware.peer_metadata.update_model(model_id, middleware._get_own_ip())
+        except Exception:
+            pass
+    else:
+        # Update: check we have the model first
+        holders = middleware.peer_metadata.get_model_nodes(model_id)
+        own_ip = middleware._get_own_ip()
+        if own_ip in holders:
+            ok = save_model_file(model_id, req.update, req.model_data)
+            print("[Update-Model] Updated model locally:", model_id)
+            if not ok:
+                raise HTTPException(status_code=500, detail="No se pudo guardar el modelo actualizado")
 
     # Prepare JSON bytes for replication
     try:
@@ -131,12 +146,20 @@ def save_and_replicate_model_endpoint(
 
     # Schedule replication in background to avoid blocking the request
     if background_tasks is not None and payload_bytes is not None:
-        background_tasks.add_task(middleware.replicate_model_json, model_id, payload_bytes)
+        print("[Replicate-Model] Scheduling replication for model:", model_id)
+        # If this is an update, replicate only to nodes that already have this model
+        if req.update:
+            background_tasks.add_task(middleware.replicate_model_update, model_id, payload_bytes)
+        else:
+            background_tasks.add_task(middleware.replicate_model_json, model_id, payload_bytes)
     else:
         # Best-effort: try synchronous replicate if background tasks not provided
         try:
             if payload_bytes is not None:
-                middleware.replicate_model_json(model_id, payload_bytes)
+                if req.update:
+                    middleware.replicate_model_update(model_id, payload_bytes)
+                else:
+                    middleware.replicate_model_json(model_id, payload_bytes)
         except Exception:
             pass
 
@@ -145,8 +168,8 @@ def save_and_replicate_model_endpoint(
 
 @router.post("/replicate")
 async def receive_model_replication(
-    model_id: str = Body(...),
-    nodes_ips: List[str] = Body(...),
+    model_id: str = Form(...),
+    nodes_ips: str = Form(...),
     file: UploadFile = File(...),
 ):
     """
@@ -165,11 +188,74 @@ async def receive_model_replication(
 
     # Update local metadata about who has the model
     try:
+        # nodes_ips arrives as a JSON string in the multipart form, parse it
+        parsed_nodes = []
+        try:
+            parsed_nodes = json.loads(nodes_ips)
+        except Exception:
+            parsed_nodes = []
+
         middleware.peer_metadata.update_model(model_id, middleware._get_own_ip())
-        for node_ip in nodes_ips:
+        for node_ip in parsed_nodes:
             middleware.peer_metadata.update_model(model_id, node_ip)
     except Exception:
         pass
 
     return {"status": "replicated", "model_id": model_id}
+
+
+@router.post("/replicate_update")
+async def receive_model_update(
+    request: Request,
+    model_id: str = Form(...),
+    file: UploadFile = File(...),
+    nodes_ips: str | None = Form(None),
+):
+    """
+    Internal Endpoint: Receive an update for an existing model from another DB node.
+    Only accepts requests coming from known healthy peers and will only save the
+    update if peer metadata indicates this node already has the model.
+    """
+    # Verify caller is another healthy peer
+    try:
+        caller_ip = request.client.host
+    except Exception:
+        raise HTTPException(status_code=400, detail="Cannot determine caller IP")
+
+    healthy = middleware.get_healthy_peers()
+    if caller_ip not in healthy:
+        raise HTTPException(status_code=403, detail="Endpoint available only to other DB nodes")
+
+    # Check peer metadata: only accept update if this node already has the model
+    own_ip = middleware._get_own_ip()
+    holders = middleware.peer_metadata.get_model_nodes(model_id)
+    if own_ip not in holders:
+        raise HTTPException(status_code=404, detail="Este nodo no tiene el modelo registrado; no se acepta actualizaciones")
+
+    print(f"[Receive-Model-Update] Receiving update for model {model_id} from {caller_ip}")
+    content = await file.read()
+    try:
+        data = json.loads(content.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON file")
+
+    ok = save_model_file(model_id, True, data)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Could not save updated model")
+
+    # We don't change peer metadata for updates (holders remain same), but ensure we
+    # have ourselves recorded. Also optionally update metadata for nodes_ips provided.
+    try:
+        middleware.peer_metadata.update_model(model_id, own_ip)
+        if nodes_ips:
+            try:
+                parsed_nodes = json.loads(nodes_ips)
+                for node_ip in parsed_nodes:
+                    middleware.peer_metadata.update_model(model_id, node_ip)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return {"status": "update-applied", "model_id": model_id}
 

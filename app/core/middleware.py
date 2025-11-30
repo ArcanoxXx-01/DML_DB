@@ -348,51 +348,7 @@ class Middleware:
                 print(f"[check_and_rereplicate_datasets] Dataset {dataset_id} has sufficient replicas: "
                       f"{current_count}/{self.REPLICATION_FACTOR}")
                 
-    def check_and_rereplicate_models(self, model_ids: set = None):
-        """
-        Check replication factor for models and re-replicate if needed.
-
-        Args:
-            model_ids: Optional set of specific model IDs to check. If None, checks all known models.
-        """
-        if model_ids is None:
-            model_ids = set(self.peer_metadata.model_jsons.keys())
-
-        if not model_ids:
-            print("[check_and_rereplicate_models] No models to check")
-            return
-
-        print(f"[check_and_rereplicate_models] Checking {len(model_ids)} model(s)")
-
-        for model_id in model_ids:
-            current_holders = self.peer_metadata.get_model_nodes(model_id)
-            current_count = len(current_holders)
-            needed = self.REPLICATION_FACTOR - current_count
-
-            if needed > 0:
-                print(f"[check_and_rereplicate_models] Model {model_id} is under-replicated: "
-                      f"{current_count}/{self.REPLICATION_FACTOR} copies. Need {needed} more.")
-
-                # If this node has the model, initiate replication
-                if self.own_ip in current_holders:
-                    print(f"[check_and_rereplicate_models] This node has {model_id}, initiating re-replication")
-                    try:
-                        resp = load_model(model_id)
-                        if resp and isinstance(resp, dict) and "model_data" in resp:
-                            try:
-                                model_bytes = json.dumps(resp["model_data"]).encode("utf-8")
-                                self.replicate_model_json(model_id, model_bytes)
-                            except Exception as e:
-                                print(f"[check_and_rereplicate_models] Error serializing model {model_id}: {e}")
-                        else:
-                            print(f"[check_and_rereplicate_models] Could not load model {model_id} for re-replication")
-                    except Exception as e:
-                        print(f"[check_and_rereplicate_models] Error re-replicating model {model_id}: {e}")
-                else:
-                    print(f"[check_and_rereplicate_models] This node doesn't have {model_id}, held by: {current_holders}")
-            else:
-                print(f"[check_and_rereplicate_models] Model {model_id} has sufficient replicas: {current_count}/{self.REPLICATION_FACTOR}")
-                
+                 
     def load_dataset_content(self, dataset_id: str) -> Optional[bytes]:
         """
         Load dataset content from local storage.
@@ -599,16 +555,124 @@ class Middleware:
             except Exception as e:
                 print(f"[Replication] Error sending to {ip}: {e}")
 
+    def load_model_json_content(self, model_id: str) -> Optional[bytes]:
+        """
+        Load model JSON content from local storage.
+        
+        Args:
+            model_id: ID of the model to load
+            
+        Returns:
+            Model JSON file content as bytes, or None if not found
+        """
+        try:
+            from config.manager import MODELS_DIR  # Add this to your config
+            
+            model_path = Path(MODELS_DIR) / f"{model_id}.json"
+            
+            if not model_path.exists():
+                print(f"[load_model_json_content] Model file not found: {model_path}")
+                return None
+            
+            with open(model_path, 'rb') as f:
+                content = f.read()
+            
+            print(f"[load_model_json_content] Loaded model {model_id}: {len(content)} bytes")
+            return content
+            
+        except Exception as e:
+            print(f"[load_model_json_content] Error loading model {model_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def save_model_json_content(self, model_id: str, model_json: bytes) -> bool:
+        """
+        Save model JSON content to local storage.
+        
+        Args:
+            model_id: ID of the model
+            model_json: Model JSON content as bytes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from config.manager import MODELS_DIR
+            
+            models_dir = Path(MODELS_DIR)
+            models_dir.mkdir(parents=True, exist_ok=True)
+            
+            model_path = models_dir / f"{model_id}.json"
+            
+            with open(model_path, 'wb') as f:
+                f.write(model_json)
+            
+            print(f"[save_model_json_content] Saved model {model_id}: {len(model_json)} bytes")
+            
+            # Update metadata to track that this node has the model
+            self.peer_metadata.update_model(model_id, self.own_ip)
+            
+            return True
+            
+        except Exception as e:
+            print(f"[save_model_json_content] Error saving model {model_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def check_and_rereplicate_models(self, model_ids: set = None):
+        """
+        Check replication factor for models and re-replicate if needed.
+
+        Args:
+            model_ids: Optional set of specific model IDs to check. If None, checks all known models.
+        """
+        if model_ids is None:
+            model_ids = set(self.peer_metadata.model_jsons.keys())
+
+        if not model_ids:
+            print("[check_and_rereplicate_models] No models to check")
+            return
+
+        print(f"[check_and_rereplicate_models] Checking {len(model_ids)} model(s)")
+
+        for model_id in model_ids:
+            current_holders = self.peer_metadata.get_model_nodes(model_id)
+            current_count = len(current_holders)
+            needed = self.REPLICATION_FACTOR - current_count
+
+            if needed > 0:
+                print(f"[check_and_rereplicate_models] Model {model_id} is under-replicated: "
+                    f"{current_count}/{self.REPLICATION_FACTOR} copies. Need {needed} more.")
+
+                # If this node has the model, initiate replication
+                if self.own_ip in current_holders:
+                    print(f"[check_and_rereplicate_models] This node has {model_id}, initiating re-replication")
+                    try:
+                        # Load model JSON from disk
+                        model_bytes = self.load_model_json_content(model_id)
+                        
+                        if model_bytes:
+                            self.replicate_model_json(model_id, model_bytes)
+                        else:
+                            print(f"[check_and_rereplicate_models] Could not load model {model_id} for re-replication")
+                    except Exception as e:
+                        print(f"[check_and_rereplicate_models] Error re-replicating model {model_id}: {e}")
+                else:
+                    print(f"[check_and_rereplicate_models] This node doesn't have {model_id}, held by: {current_holders}")
+            else:
+                print(f"[check_and_rereplicate_models] Model {model_id} has sufficient replicas: {current_count}/{self.REPLICATION_FACTOR}")
+
     def replicate_model_json(self, model_id: str, model_json: bytes):
         """
         Ensure the model JSON exists on at least `REPLICATION_FACTOR` nodes.
-        Similar to `replicate_dataset` but for model JSONs.
         """
-        # 1. Update own state first
+        # 1. Update own state first (if we have it)
         try:
             self.peer_metadata.update_model(model_id, self.own_ip)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Model-Replication] Error updating own metadata: {e}")
 
         # 2. Get current holders (including self)
         current_holders = self.peer_metadata.get_model_nodes(model_id)
@@ -630,6 +694,7 @@ class Middleware:
             return
 
         # 4. Select targets
+        import random
         targets = random.sample(candidates, min(needed, len(candidates)))
         print(f"[Model-Replication] Selected targets: {targets}")
 
@@ -639,7 +704,7 @@ class Middleware:
                 print(f"[Model-Replication] Sending model {model_id} to {ip}...")
                 response = requests.post(
                     f"http://{ip}:8000/api/v1/models/replicate",
-                    data={"model_id": model_id, "nodes_ips": targets},
+                    data={"model_id": model_id, "nodes_ips": json.dumps(targets)},
                     files={"file": (f"{model_id}.json", model_json, "application/json")},
                     timeout=self.timeout,
                 )
@@ -650,4 +715,40 @@ class Middleware:
                     print(f"[Model-Replication] Failed to send to {ip}: {response.text}")
             except Exception as e:
                 print(f"[Model-Replication] Error sending to {ip}: {e}")
-        
+
+    def replicate_model_update(self, model_id: str, model_json: bytes):
+        """
+        Send a model update to nodes that already hold the model (according to peer metadata).
+        This is used for updates: we do not create new holders here, just push the new
+        JSON to nodes that are already known to have it.
+        """
+        try:
+            current_holders = set(self.peer_metadata.get_model_nodes(model_id))
+        except Exception as e:
+            print(f"[Model-Update-Replication] Error getting holders for {model_id}: {e}")
+            return
+
+        # Exclude self
+        own = self._get_own_ip()
+        targets = [ip for ip in current_holders if ip != own]
+
+        if not targets:
+            print(f"[Model-Update-Replication] No targets to send update for {model_id}")
+            return
+
+        print(f"[Model-Update-Replication] Sending update for {model_id} to {targets}")
+
+        for ip in targets:
+            try:
+                response = requests.post(
+                    f"http://{ip}:8000/api/v1/models/replicate_update",
+                    data={"model_id": model_id, "nodes_ips": json.dumps(targets)},
+                    files={"file": (f"{model_id}.json", model_json, "application/json")},
+                    timeout=self.timeout,
+                )
+                if response.status_code == 200:
+                    print(f"[Model-Update-Replication] Successfully sent update to {ip}")
+                else:
+                    print(f"[Model-Update-Replication] Failed to send update to {ip}: {response.status_code} {response.text}")
+            except Exception as e:
+                print(f"[Model-Update-Replication] Error sending update to {ip}: {e}")
