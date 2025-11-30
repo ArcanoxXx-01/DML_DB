@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Background
 from fastapi.responses import JSONResponse
 import json
 import requests
-from config.manager import middleware
+from config.config import middleware
 from schemas.models import (
     ModelHealthUpdateResponse,
     ModelUpdatedResponse,
@@ -104,15 +104,16 @@ def get_model_info_endpoint(model_id: str):
 
 @router.post("/{model_id}")
 def save_and_replicate_model_endpoint(
+    background_tasks: BackgroundTasks,
     model_id: str,
     req: SaveModelRequest = Body(...),
-    background_tasks: BackgroundTasks = None,
 ):
     """
     Save model and trigger replication to peers in background.
     This replaces the simple save endpoint to also replicate the model JSON.
     """
     ok = save_model_file(model_id, req.update, req.model_data)
+    print("[Save-Model] Saved model locally:", model_id)
     if not ok:
         raise HTTPException(status_code=500, detail="No se pudo guardar el modelo")
 

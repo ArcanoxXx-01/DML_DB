@@ -11,7 +11,7 @@ from api.services.dataset_services import (
     append_to_csv_file # You likely need a helper to write to 'datasets.csv'
 )
 import csv
-from config.manager import middleware
+from config.config import middleware
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 

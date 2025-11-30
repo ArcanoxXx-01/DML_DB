@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from api.routers import datasets_routes, trainings_routes, models_routes, results_routes, predictions_routes, health_routes, peers_routes
 from config.manager import API
 from utils.utils import ensure_paths_exists
-from config.manager import middleware
+from config.config import middleware
 
 ensure_paths_exists()
 

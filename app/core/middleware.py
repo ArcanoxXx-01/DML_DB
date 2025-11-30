@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import datetime
 import random
+from pathlib import Path
 
 from core.peer_metadata import PeerMetadata
 import json
@@ -13,8 +14,8 @@ from api.services.models_services import load_model
 
 class Middleware:
     """Middleware class for sending HTTP requests with Pydantic schema validation and IP caching."""
-    
-    def __init__(self, timeout: float = 30.0, health_check_timeout: float = 10.0):
+
+    def __init__(self, timeout: float = 30.0, health_check_timeout: float = 10.0, csv_paths: dict[str, Path] = None):
         """
         Initialize the middleware.
         
@@ -33,7 +34,7 @@ class Middleware:
         self.discovery_thread: Optional[threading.Thread] = None
         self.stop_discovery = threading.Event()
         self.cache_lock = threading.Lock()
-        self.peer_metadata: PeerMetadata = PeerMetadata(self.own_ip)
+        self.peer_metadata: PeerMetadata = PeerMetadata(self.own_ip,csv_paths=csv_paths or {})
         self.REPLICATION_FACTOR = 3
 
         print("Middleware initialized with own IP:", self.own_ip)
@@ -193,10 +194,18 @@ class Middleware:
         Args:
             label: Label to identify this state snapshot
         """
-        print(f"\n📊 DATASETS STATE - {label}")
+        print(f"\n📊 PEER METADATA STATE - {label}")
         print(f"{'─'*80}")
-        
+
         with self.peer_metadata.lock:
+            # Node id
+            try:
+                print(f"Node ID: {self.peer_metadata.node_id}")
+            except Exception:
+                print("Node ID: <unavailable>")
+
+            # Datasets
+            print('\nDatasets:')
             if not self.peer_metadata.datasets:
                 print("   No datasets tracked yet")
             else:
@@ -204,11 +213,46 @@ class Middleware:
                     node_list = sorted(list(nodes))
                     replica_count = len(node_list)
                     status = "✅" if replica_count >= self.REPLICATION_FACTOR else "⚠️"
-                    
                     print(f"   {status} Dataset: {dataset_id}")
                     print(f"      Replicas: {replica_count}/{self.REPLICATION_FACTOR}")
                     print(f"      Nodes: {node_list}")
-        
+
+            # Models
+            print('\nModels (model_jsons):')
+            if not self.peer_metadata.model_jsons:
+                print("   No models tracked yet")
+            else:
+                for model_id, nodes in sorted(self.peer_metadata.model_jsons.items()):
+                    holders = sorted(list(nodes))
+                    print(f"   Model: {model_id} -> Nodes: {holders}")
+
+            # Predictions
+            print('\nPredictions (model_id::dataset_id -> nodes):')
+            if not self.peer_metadata.prediction_jsons:
+                print("   No prediction JSONs tracked yet")
+            else:
+                for (model_id, dataset_id), nodes in sorted(self.peer_metadata.prediction_jsons.items()):
+                    holders = sorted(list(nodes))
+                    print(f"   {model_id} :: {dataset_id} -> Nodes: {holders}")
+
+            # CSVs and timestamps
+            print('\nCSV tracking:')
+            for csv_name, nodes in self.peer_metadata.csvs.items():
+                holders = sorted(list(nodes))
+                timestamp = self.peer_metadata.csv_timestamps.get(csv_name, 0.0)
+                # try to get basic CSV info (rows, header) without raising
+                rows_info = ''
+                try:
+                    content = self.peer_metadata.read_csv_content(csv_name)
+                    if content:
+                        rows_info = f"rows={len(content)} header={content[0]}"
+                    else:
+                        rows_info = "rows=0"
+                except Exception:
+                    rows_info = "rows=<error>"
+
+                print(f"   {csv_name} -> Nodes: {holders} | ts={timestamp} | {rows_info}")
+
         print(f"{'─'*80}")
 
     def cleanup_dead_peers(self, dead_ips: List[str]):

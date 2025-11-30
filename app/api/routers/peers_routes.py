@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Body
-from config.manager import middleware
+from config.config import middleware
 
 router = APIRouter(prefix="/peers", tags=["peers"])
 
