@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException, Body, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from schemas.datasets import DatasetUploadResponse
@@ -52,7 +53,8 @@ async def upload_dataset(
 
 @router.post("/replicate")
 async def receive_replication(
-    dataset_id: str = Body(...), 
+    dataset_id: str = Body(...),
+    nodes_ips: List[str] = Body(...), 
     file: UploadFile = File(...)
 ):
     """
@@ -70,6 +72,8 @@ async def receive_replication(
     
     # Update local knowledge
     middleware.peer_metadata.update_dataset(dataset_id, middleware._get_own_ip())
+    for node_ip in nodes_ips:
+        middleware.peer_metadata.update_dataset(dataset_id, node_ip)
 
     return {"status": "replicated", "batches": batches}
 

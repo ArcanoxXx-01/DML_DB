@@ -483,7 +483,7 @@ class Middleware:
                 # Reset file pointer for each request if needed, or send bytes directly
                 response = requests.post(
                     f"http://{ip}:8000/api/v1/datasets/replicate",
-                    data={"dataset_id": dataset_id},
+                    data={"dataset_id": dataset_id, "nodes_ips": targets},
                     files={'file': file_content}, # Requests handles bytes automatically
                     timeout=self.timeout
                 )

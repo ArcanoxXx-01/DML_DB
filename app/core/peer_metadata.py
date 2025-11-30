@@ -229,8 +229,8 @@ class PeerMetadata:
             except Exception:
                 pass
 
-            # sleep 7 seconds as requested
-            self._stop_sync.wait(7.0)
+            # sleep 20 seconds as requested
+            self._stop_sync.wait(20.0)
 
     def start_sync(self, middleware):
         """Start the background sync thread. Call from the Middleware after startup."""
