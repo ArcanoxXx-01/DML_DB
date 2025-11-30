@@ -185,6 +185,9 @@ class Middleware:
         else:
             print(f"\n✅ All peers are healthy!\n{'='*80}\n")
 
+        alive_ips = [ip for ip, alive in results.items() if alive]
+        self.peer_metadata.cleanup_dead_peers(alive_nodes=alive_ips)
+
         return results
 
     def _print_datasets_state(self, label: str):
@@ -284,7 +287,7 @@ class Middleware:
                 models_on_peer = set()
                 with self.peer_metadata.lock:
                     for model_id, holders in self.peer_metadata.model_jsons.items():
-                        if ip in holders:
+                        if ip in holders and self.own_ip == min(holders):
                             models_on_peer.add(model_id)
                 affected_models.update(models_on_peer)
 
@@ -437,8 +440,8 @@ class Middleware:
             except Exception as e:
                 print(f"[_discover_ips] Error during IP refresh: {e}")
 
-            # Wait 5 seconds or until stop signal
-            self.stop_discovery.wait(5.0)
+            # Wait 2 seconds or until stop signal
+            self.stop_discovery.wait(2.0)
         
         print(f"[_discover_ips] IP discovery thread stopped")
     
@@ -566,9 +569,9 @@ class Middleware:
             Model JSON file content as bytes, or None if not found
         """
         try:
-            from config.manager import MODELS_DIR  # Add this to your config
+            from config.manager import MODELS  # Add this to your config
             
-            model_path = Path(MODELS_DIR) / f"{model_id}.json"
+            model_path = Path(MODELS) / f"{model_id}.json"
             
             if not model_path.exists():
                 print(f"[load_model_json_content] Model file not found: {model_path}")

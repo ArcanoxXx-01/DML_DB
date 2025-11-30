@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Set, Any, Tuple, Optional
 import requests
 import csv
 from pathlib import Path
@@ -80,12 +80,6 @@ class PeerMetadata:
     def get_datasets_by_node(self, node_id: str) -> Set[str]:
         """
         Get all dataset IDs that a specific node has.
-        
-        Args:
-            node_id: The node ID to search for
-            
-        Returns:
-            Set of dataset IDs that the node has
         """
         with self.lock:
             datasets_on_node = set()
@@ -97,15 +91,6 @@ class PeerMetadata:
     def get_datasets_by_node_for_own_ip(self, node_id: str, own_ip: str = None) -> Set[str]:
         """
         Get all dataset IDs that a specific node has.
-
-        Args:
-            node_id: The node ID to search for
-            own_ip: Optional IP of the current node. If provided and the node_id
-                    is among holders, only returns dataset_id when `own_ip` is
-                    the minimum of holders (used for coordination).
-
-        Returns:
-            Set of dataset IDs that the node has
         """
         with self.lock:
             datasets_on_node = set()
@@ -118,8 +103,6 @@ class PeerMetadata:
     def remove_peer(self, node_id: str):
         """
         Remove a peer/node from all tracked metadata sets.
-        This will remove `node_id` from datasets, model_jsons, prediction_jsons and csvs.
-        If any entry's set becomes empty, the entry is removed from the dictionary.
         """
         with self.lock:
             # datasets
@@ -192,11 +175,17 @@ class PeerMetadata:
             return csv_path.stat().st_mtime
         return 0.0
 
-    def _merge_csv_rows(self, local_rows: List[List[str]], remote_rows: List[List[str]]) -> List[List[str]]:
-        """Merge two CSV row lists, deduplicating by the first three columns.
-
-        Local rows are preserved first; remote rows are appended if their
-        first-three-column key isn't already present. This keeps information from all peers.
+    def _merge_csv_rows(self, csv_name: str, local_rows: List[List[str]], remote_rows: List[List[str]]) -> List[List[str]]:
+        """
+        Merge CSV rows based on specific logic per file type.
+        
+        Logic:
+        - datasets.csv: Merge keeping unique keys (dataset_id).
+        - trainings.csv: Merge keeping unique keys (training_id).
+        - models.csv: Unique key (model_id, training_id, dataset_id).
+          Conflict resolution:
+          1. Status 'completed' takes precedence.
+          2. Health (most recent timestamp) takes precedence.
         """
         if not local_rows and not remote_rows:
             return []
@@ -206,30 +195,131 @@ class PeerMetadata:
             return remote_rows
         if not remote_rows:
             return local_rows
+
+        # Separate headers and data
+        header = local_rows[0]
+        # We assume both files have the same header structure
         
-        seen = set()
-        merged: List[List[str]] = []
+        # Filter out headers from data processing
+        local_data = local_rows[1:]
+        remote_data = remote_rows[1:]
+        
+        merged_data = []
 
-        def key_for(row: List[str]):
-            # Use first 3 columns as unique key (typically: id, name, timestamp or similar)
-            return tuple(row[:3]) if len(row) >= 3 else tuple(row)
+        if csv_name == 'models.csv':
+            merged_data = self._merge_models_logic(local_data, remote_data)
+        elif csv_name == 'datasets.csv':
+            # Unique key is dataset_id (index 0)
+            merged_data = self._merge_simple_unique(local_data, remote_data, key_indices=[0])
+        elif csv_name == 'trainings.csv':
+            # Unique key is training_id (index 0)
+            merged_data = self._merge_simple_unique(local_data, remote_data, key_indices=[0])
+        else:
+            # Fallback for unknown CSVs: simple dedupe by first 3 columns
+            merged_data = self._merge_simple_unique(local_data, remote_data, key_indices=[0, 1, 2])
 
-        # Add local rows first
-        for row in local_rows:
-            k = key_for(row)
-            if k not in seen:
+        # Prepend header and return
+        return [header] + merged_data
+
+    def _merge_simple_unique(self, local_data: List[List[str]], remote_data: List[List[str]], key_indices: List[int]) -> List[List[str]]:
+        """
+        Merges two lists preserving all rows, deduplicating based on specific key indices.
+        Local rows are preserved if keys collide (standard set union).
+        """
+        seen_keys = set()
+        merged = []
+
+        def get_key(row):
+            # safely extract key, using tuple of values at key_indices
+            return tuple(row[i] for i in key_indices if i < len(row))
+
+        # Add local rows
+        for row in local_data:
+            k = get_key(row)
+            if k not in seen_keys:
                 merged.append(row)
-                seen.add(k)
-
-        # Add remote rows that aren't duplicates
-        for row in remote_rows:
-            k = key_for(row)
-            if k not in seen:
+                seen_keys.add(k)
+        
+        # Add remote rows if key not seen
+        for row in remote_data:
+            k = get_key(row)
+            if k not in seen_keys:
                 merged.append(row)
-                seen.add(k)
-
-        print(f"[_merge_csv_rows] Merged {len(local_rows)} local + {len(remote_rows)} remote = {len(merged)} total rows")
+                seen_keys.add(k)
+        
         return merged
+
+    def _merge_models_logic(self, local_data: List[List[str]], remote_data: List[List[str]]) -> List[List[str]]:
+        """
+        Specific merge logic for models.csv.
+        
+        Columns based on provided headers:
+        0: model_id, 1: training_id, 2: dataset_id, 3: model_name, 4: training_type, 
+        5: task, 6: status, 7: health, ...
+        
+        Key: (model_id, training_id, dataset_id) -> indices (0, 1, 2)
+        Precedence:
+        1. status == 'completed'
+        2. health (float timestamp) -> larger (more recent) wins
+        """
+        # Map key -> row
+        merged_dict = {}
+
+        STATUS_IDX = 6
+        HEALTH_IDX = 7
+
+        def get_model_key(row):
+            if len(row) < 3:
+                return tuple(row)
+            return (row[0], row[1], row[2])
+
+        def parse_health(val: str) -> float:
+            try:
+                return float(val)
+            except ValueError:
+                return 0.0
+
+        def is_better_row(current_row, new_row):
+            """Returns True if new_row should replace current_row."""
+            if len(new_row) <= STATUS_IDX: return False
+            if len(current_row) <= STATUS_IDX: return True
+
+            curr_status = current_row[STATUS_IDX].strip().lower()
+            new_status = new_row[STATUS_IDX].strip().lower()
+
+            # 1. Status Precedence: Completed wins
+            if new_status == 'completed' and curr_status != 'completed':
+                return True
+            if curr_status == 'completed' and new_status != 'completed':
+                return False
+            
+            # 2. Health Precedence: Most recent time wins
+            curr_health = parse_health(current_row[HEALTH_IDX]) if len(current_row) > HEALTH_IDX else 0.0
+            new_health = parse_health(new_row[HEALTH_IDX]) if len(new_row) > HEALTH_IDX else 0.0
+
+            if new_health > curr_health:
+                return True
+            
+            return False
+
+        # 1. Load Local Data
+        for row in local_data:
+            k = get_model_key(row)
+            merged_dict[k] = row
+
+        # 2. Merge Remote Data with Precedence Logic
+        for row in remote_data:
+            k = get_model_key(row)
+            if k not in merged_dict:
+                # New entry, just add it
+                merged_dict[k] = row
+            else:
+                # Conflict: Check precedence
+                current_row = merged_dict[k]
+                if is_better_row(current_row, row):
+                    merged_dict[k] = row
+
+        return list(merged_dict.values())
 
     # ----- Sync helpers -----
     def to_dict(self) -> Dict[str, Any]:
@@ -316,7 +406,8 @@ class PeerMetadata:
         for csv_name, local_content, remote_content, remote_timestamp in merge_tasks:
             try:
                 print(f"[merge_peer_metadata] Merging CSV: {csv_name}")
-                merged_content = self._merge_csv_rows(local_content, remote_content)
+                # Calls the new specialized merge logic
+                merged_content = self._merge_csv_rows(csv_name, local_content, remote_content)
                 
                 # Write merged content
                 self.write_csv_content(csv_name, merged_content)
@@ -327,6 +418,41 @@ class PeerMetadata:
                     
             except Exception as e:
                 print(f"[merge_peer_metadata] Error merging CSV {csv_name}: {e}")
+
+    def cleanup_dead_peers(self, alive_nodes: List[str]):
+        """
+        Compare currently tracked nodes against a list of alive nodes.
+        Remove any tracked node that is not in the alive list.
+        """
+        # Convert to set for O(1) lookups
+        alive_set = set(alive_nodes)
+        # Ensure we never remove ourselves, even if not in the list
+        alive_set.add(self.node_id)
+
+        known_nodes = set()
+
+        # 1. Identify all known nodes (inside lock)
+        with self.lock:
+            for nodes in self.datasets.values():
+                known_nodes.update(nodes)
+            for nodes in self.model_jsons.values():
+                known_nodes.update(nodes)
+            for nodes in self.prediction_jsons.values():
+                known_nodes.update(nodes)
+            for nodes in self.csvs.values():
+                known_nodes.update(nodes)
+
+        # 2. Calculate dead nodes (outside lock to prevent deadlock with remove_peer)
+        dead_nodes = known_nodes - alive_set
+
+        if not dead_nodes:
+            return
+
+        print(f"[cleanup_dead_peers_by_detecting_alives] Pruning {len(dead_nodes)} dead nodes: {dead_nodes}")
+        
+        # 3. Remove them one by one
+        for node in dead_nodes:
+            self.remove_peer(node)
 
     def _sync_loop(self):
         """Background loop that every 10 seconds exchanges metadata with healthy peers."""
@@ -339,7 +465,7 @@ class PeerMetadata:
                 payload = self.to_dict()
                 # include our node id explicitly
                 payload["node_id"] = self.node_id
-
+                
                 for peer in peers:
                     # skip self
                     if peer == self.node_id:
@@ -361,8 +487,8 @@ class PeerMetadata:
             except Exception as e:
                 print(f"[_sync_loop] Error in sync loop: {e}")
 
-            # sleep 2 seconds
-            self._stop_sync.wait(2.0)
+            # sleep 10 seconds
+            self._stop_sync.wait(10.0)
 
     def start_sync(self, middleware):
         """Start the background sync thread. Call from the Middleware after startup."""
