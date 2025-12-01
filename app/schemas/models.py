@@ -37,3 +37,26 @@ class ModelMetricsUpdateRequest(BaseModel):
 class ModelUpdatedResponse(BaseModel):
     model_id: str
     updated: bool
+
+
+class ModelVersionInfo(BaseModel):
+    """Model version information for comparison between nodes."""
+    model_id: str
+    training_completed: bool
+    last_trained_batch: int | None
+    last_predicted_batch_by_dataset: Dict[str, int]  # dataset_id -> last_predicted_batch
+
+
+class ModelVersionCompareRequest(BaseModel):
+    """Request to compare model versions."""
+    model_id: str
+    training_completed: bool
+    last_trained_batch: int | None
+    last_predicted_batch_by_dataset: Dict[str, int]
+
+
+class ModelVersionCompareResponse(BaseModel):
+    """Response indicating if local model is better and in what way."""
+    is_better: bool
+    better_training: bool  # True if training state is better
+    better_predictions: List[str]  # List of dataset_ids where predictions are better

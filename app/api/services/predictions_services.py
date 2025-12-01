@@ -1,7 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import json
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from config.manager import PREDICTIONS
 from utils.utils import gen_id, now_iso
 from config.manager import MODELS_META, METRICS, MODELS
@@ -41,7 +41,7 @@ def save_prediction_session(model_id: str, dataset_id: str) -> bool:
     except Exception:
         return False
 
-def save_prediction_results(model_id: str, dataset_id: str, predictions_list: list[float]) -> bool:
+def save_prediction_results(model_id: str, dataset_id: str, predictions_list: List[float]) -> bool:
     try:
         # Determine predictions directory: prefer configured PREDICTIONS if set
         if PREDICTIONS:
@@ -100,3 +100,37 @@ def save_prediction_results(model_id: str, dataset_id: str, predictions_list: li
         return True
     except Exception:
         return False
+
+
+def get_prediction_results(model_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Load prediction results from local storage.
+    
+    Args:
+        model_id: ID of the model used for the prediction
+        dataset_id: ID of the dataset used for the prediction
+        
+    Returns:
+        Dictionary with prediction data or None if not found
+    """
+    try:
+        # Determine predictions directory
+        if PREDICTIONS:
+            predictions_dir = Path(PREDICTIONS)
+        else:
+            repo_root = Path(__file__).resolve().parents[3]
+            predictions_dir = repo_root / "predictions"
+
+        filename = f"{model_id}_{dataset_id}.json"
+        file_path = predictions_dir / filename
+
+        if not file_path.exists():
+            return None
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        return data
+    except Exception as e:
+        print(f"[get_prediction_results] Error loading prediction {model_id}_{dataset_id}: {e}")
+        return None

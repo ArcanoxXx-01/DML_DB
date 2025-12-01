@@ -195,6 +195,30 @@ class PeerMetadata:
                     datasets_on_node.add(dataset_id)
             return datasets_on_node
 
+    def get_predictions_by_node(self, node_id: str) -> Set[Tuple[str, str]]:
+        """
+        Get all prediction keys (model_id, dataset_id) that a specific node has.
+        """
+        with self.lock:
+            predictions_on_node = set()
+            for key, nodes in self.prediction_jsons.items():
+                if node_id in nodes:
+                    predictions_on_node.add(key)
+            return predictions_on_node
+
+    def get_predictions_by_node_for_own_ip(self, node_id: str, own_ip: str = None) -> Set[Tuple[str, str]]:
+        """
+        Get all prediction keys (model_id, dataset_id) that a specific node has,
+        filtered by responsibility (own_ip is the smallest holder).
+        """
+        with self.lock:
+            predictions_on_node = set()
+            for key, nodes in self.prediction_jsons.items():
+                if node_id in nodes:
+                    if own_ip is None or own_ip == min(nodes):
+                        predictions_on_node.add(key)
+            return predictions_on_node
+
     def get_datasets_by_node_for_own_ip(self, node_id: str, own_ip: str = None) -> Set[str]:
         """
         Get all dataset IDs that a specific node has.

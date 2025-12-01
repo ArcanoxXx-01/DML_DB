@@ -127,7 +127,7 @@ def get_batch(dataset_id: str, batch: int):
     detail = "No se pudo obtener el batch desde los peers"
     if last_error:
         detail += f": {last_error}"
-    raise HTTPException(status_code=502, detail=detail)
+    raise HTTPException(status_code=404, detail=detail)
 
 
 @router.get("/list")

@@ -11,6 +11,9 @@ from schemas.models import (
     SaveModelRequest,
     GetModelResponse,
     ModelInfoResponse,
+    ModelVersionInfo,
+    ModelVersionCompareRequest,
+    ModelVersionCompareResponse,
 )
 from api.services.models_services import (
     update_health,
@@ -146,13 +149,108 @@ async def receive_model_update(
     return {"status": "update-applied", "model_id": model_id}
 
 
+@router.get("/version/{model_id}", response_model=ModelVersionInfo)
+def get_model_version_info(model_id: str):
+    """
+    Get version information for a model (for comparison between nodes).
+    Returns training_completed, last_trained_batch, and last_predicted_batch_by_dataset.
+    """
+    response = load_model(model_id)
+    if not response or "model_data" not in response:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado")
+    
+    model_data = response["model_data"]
+    metadata = model_data.get("metadata", {})
+    
+    # Training fields are inside metadata, not at model_data root
+    training_completed = metadata.get("training_completed", False)
+    last_trained_batch = metadata.get("last_trained_batch")
+    last_predicted_batch_by_dataset = metadata.get("last_predicted_batch_by_dataset", {})
+    
+    return ModelVersionInfo(
+        model_id=model_id,
+        training_completed=training_completed,
+        last_trained_batch=last_trained_batch,
+        last_predicted_batch_by_dataset=last_predicted_batch_by_dataset or {}
+    )
+
+
+@router.post("/compare/{model_id}", response_model=ModelVersionCompareResponse)
+def compare_model_version(model_id: str, req: ModelVersionCompareRequest = Body(...)):
+    """
+    Compare requester's model version with local model.
+    Returns whether local model is better and in what aspects.
+    
+    Better training means:
+    - Local training_completed=True and requester's is False
+    - OR both not completed but local last_trained_batch > requester's
+    
+    Better predictions means:
+    - Local has a dataset_id that requester doesn't have
+    - OR local has higher last_predicted_batch for a dataset_id
+    """
+    response = load_model(model_id)
+    if not response or "model_data" not in response:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado")
+    
+    model_data = response["model_data"]
+    metadata = model_data.get("metadata", {})
+    
+    # Training fields are inside metadata, not at model_data root
+    local_training_completed = metadata.get("training_completed", False)
+    local_last_trained_batch = metadata.get("last_trained_batch")
+    local_last_predicted = metadata.get("last_predicted_batch_by_dataset", {}) or {}
+    
+    req_training_completed = req.training_completed
+    req_last_trained_batch = req.last_trained_batch
+    req_last_predicted = req.last_predicted_batch_by_dataset or {}
+    
+    # Check if local training is better
+    better_training = False
+    if local_training_completed and not req_training_completed:
+        # Local completed, requester hasn't -> local is better
+        better_training = True
+    elif not local_training_completed and not req_training_completed:
+        # Both not completed, compare last_trained_batch
+        local_batch = local_last_trained_batch if local_last_trained_batch is not None else -1
+        req_batch = req_last_trained_batch if req_last_trained_batch is not None else -1
+        if local_batch > req_batch:
+            better_training = True
+    # If requester completed and local hasn't, local is NOT better for training
+    
+    # Check if local predictions are better for any dataset
+    better_predictions = []
+    for dataset_id, local_batch in local_last_predicted.items():
+        if dataset_id not in req_last_predicted:
+            # Local has predictions for a dataset requester doesn't have
+            better_predictions.append(dataset_id)
+        else:
+            req_batch = req_last_predicted.get(dataset_id, -1)
+            local_b = local_batch if local_batch is not None else -1
+            req_b = req_batch if req_batch is not None else -1
+            if local_b > req_b:
+                better_predictions.append(dataset_id)
+    
+    is_better = better_training or len(better_predictions) > 0
+    
+    return ModelVersionCompareResponse(
+        is_better=is_better,
+        better_training=better_training,
+        better_predictions=better_predictions
+    )
+
+
 # ============================================================================
 # PARAMETRIC ROUTES - MUST COME AFTER SPECIFIC ROUTES
 # ============================================================================
 
 @router.get("/{model_id}", response_model=GetModelResponse)
 def get_model_endpoint(model_id: str):
-    # Check peer metadata: if this node has the model, serve local
+    """
+    Get model by ID. If this node has the model, it first checks if any peer
+    has a better version (more trained or with more predictions) and updates
+    local model if needed before returning.
+    """
     holders = middleware.peer_metadata.get_model_nodes(model_id)
     own_ip = middleware._get_own_ip()
 
@@ -160,6 +258,18 @@ def get_model_endpoint(model_id: str):
         response = load_model(model_id)
         if not response:
             raise HTTPException(status_code=404, detail="Modelo no encontrado (metadata inconsistency)")
+        
+        # Check if any peer has a better version
+        local_model_data = response["model_data"]
+        try:
+            updated_model = middleware.check_and_update_model_from_peers(model_id, local_model_data, holders)
+            if updated_model:
+                # Model was updated, save and return the updated version
+                save_model_file(model_id, True, updated_model)
+                return {"model_data": updated_model}
+        except Exception as e:
+            print(f"[get_model_endpoint] Error checking peers for better model: {e}")
+        
         return response
 
     # Otherwise, try peers that are known holders
@@ -193,7 +303,7 @@ def get_model_endpoint(model_id: str):
     detail = "No se pudo obtener el modelo desde los peers"
     if last_error:
         detail += f": {last_error}"
-    raise HTTPException(status_code=502, detail=detail)
+    raise HTTPException(status_code=404, detail=detail)
 
 
 @router.post("/{model_id}")

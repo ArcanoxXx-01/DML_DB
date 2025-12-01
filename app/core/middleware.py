@@ -261,7 +261,7 @@ class Middleware:
     def cleanup_dead_peers(self, dead_ips: List[str]):
         """
         Remove dead peers from peer metadata and from cache.
-        After cleanup, check all datasets and re-replicate those that are under-replicated.
+        After cleanup, check all datasets, models, and predictions and re-replicate those that are under-replicated.
         
         Args:
             dead_ips: List of IP addresses that are dead/unreachable
@@ -271,9 +271,10 @@ class Middleware:
             
         print(f"[cleanup_dead_peers] Cleaning up {len(dead_ips)} dead peer(s): {dead_ips}")
         
-        # Track which datasets and models were affected
+        # Track which datasets, models, and predictions were affected
         affected_datasets = set()
         affected_models = set()
+        affected_predictions = set()
         
         # Remove dead peers from peer metadata
         for ip in dead_ips:
@@ -291,19 +292,31 @@ class Middleware:
                             models_on_peer.add(model_id)
                 affected_models.update(models_on_peer)
 
+                # predictions held by this peer (collect before removal)
+                predictions_on_peer = set()
+                with self.peer_metadata.lock:
+                    for key, holders in self.peer_metadata.prediction_jsons.items():
+                        if ip in holders and self.own_ip in holders and self.own_ip == min(holders):
+                            predictions_on_peer.add(key)
+                affected_predictions.update(predictions_on_peer)
+
                 self.peer_metadata.remove_peer(ip)
             except Exception as e:
                 print(f"[cleanup_dead_peers] Error removing peer {ip} from metadata: {e}")
         
-        # Check and re-replicate affected datasets and models
+        # Check and re-replicate affected datasets, models, and predictions
         if affected_datasets:
             print(f"[cleanup_dead_peers] {len(affected_datasets)} dataset(s) potentially affected: {affected_datasets}")
             self.check_and_rereplicate_datasets(affected_datasets)
         if affected_models:
             print(f"[cleanup_dead_peers] {len(affected_models)} model(s) potentially affected: {affected_models}")
             self.check_and_rereplicate_models(affected_models)
-        else:
-            print(f"[cleanup_dead_peers] No datasets affected by peer removal")
+        if affected_predictions:
+            print(f"[cleanup_dead_peers] {len(affected_predictions)} prediction(s) potentially affected: {affected_predictions}")
+            self.check_and_rereplicate_predictions(affected_predictions)
+        
+        if not affected_datasets and not affected_models and not affected_predictions:
+            print(f"[cleanup_dead_peers] No resources affected by peer removal")
 
     def check_and_rereplicate_datasets(self, dataset_ids: set = None):
         """
@@ -447,8 +460,8 @@ class Middleware:
 
     def _replication_monitor(self, interval: float = 20.0):
         """
-        Background thread that periodically checks peer metadata for datasets
-        and models that are under the replication factor. If this node is the
+        Background thread that periodically checks peer metadata for datasets,
+        models, and predictions that are under the replication factor. If this node is the
         smallest ("menor") among the current holders and this node actually
         holds the resource, it will initiate re-replication.
         """
@@ -464,6 +477,7 @@ class Middleware:
                 with self.peer_metadata.lock:
                     dataset_ids = list(self.peer_metadata.datasets.keys())
                     model_ids = list(self.peer_metadata.model_jsons.keys())
+                    prediction_keys = list(self.peer_metadata.prediction_jsons.keys())
 
                 # Check datasets
                 for dataset_id in dataset_ids:
@@ -495,6 +509,22 @@ class Middleware:
                                 print(f"[_replication_monitor] Model {model_id} under-replicated but this node is not the responsible holder")
                     except Exception as e:
                         print(f"[_replication_monitor] Error checking model {model_id}: {e}")
+
+                # Check predictions
+                for key in prediction_keys:
+                    try:
+                        model_id, dataset_id = key
+                        holders = self.peer_metadata.get_prediction_nodes(model_id, dataset_id)
+                        if not holders:
+                            continue
+                        if len(holders) < self.REPLICATION_FACTOR:
+                            if self.own_ip in holders and self.own_ip == min(holders):
+                                print(f"[_replication_monitor] This node is responsible for prediction {model_id}_{dataset_id}; initiating re-replication")
+                                self.check_and_rereplicate_predictions({key})
+                            else:
+                                print(f"[_replication_monitor] Prediction {model_id}_{dataset_id} under-replicated but this node is not the responsible holder")
+                    except Exception as e:
+                        print(f"[_replication_monitor] Error checking prediction {key}: {e}")
 
             except Exception as e:
                 print(f"[_replication_monitor] Unexpected error during monitor loop: {e}")
@@ -836,3 +866,327 @@ class Middleware:
                     print(f"[Model-Update-Replication] Failed to send update to {ip}: {response.status_code} {response.text}")
             except Exception as e:
                 print(f"[Model-Update-Replication] Error sending update to {ip}: {e}")
+
+    def check_and_update_model_from_peers(self, model_id: str, local_model_data: dict, holders: set) -> Optional[dict]:
+        """
+        Check if any peer has a better version of the model and update local model if needed.
+        
+        A peer's model is better if:
+        1. Training: peer's training_completed=True and ours is False
+        2. Training: both not completed but peer's last_trained_batch > ours
+        3. Predictions: peer has predictions for a dataset we don't have
+        4. Predictions: peer has higher last_predicted_batch for a dataset
+        
+        If peer has better training -> replace entire model with peer's
+        If peer has better predictions only -> update metadata.predictions_by_dataset
+        
+        Args:
+            model_id: ID of the model to check
+            local_model_data: Current local model data
+            holders: Set of node IPs that have the model
+            
+        Returns:
+            Updated model data if changes were made, None otherwise
+        """
+        own_ip = self._get_own_ip()
+        
+        # Extract local version info from metadata (training fields are inside metadata)
+        metadata = local_model_data.get("metadata", {})
+        local_training_completed = metadata.get("training_completed", False)
+        local_last_trained_batch = metadata.get("last_trained_batch")
+        local_last_predicted = metadata.get("last_predicted_batch_by_dataset", {}) or {}
+        
+        print(f"[check_and_update_model_from_peers] Checking model {model_id}")
+        print(f"  Local: training_completed={local_training_completed}, last_trained_batch={local_last_trained_batch}")
+        print(f"  Local predictions: {local_last_predicted}")
+        
+        # Track the best version found
+        best_peer = None
+        best_training_peer = None  # Peer with better training
+        better_predictions_peers = {}  # dataset_id -> (peer_ip, peer's model data)
+        
+        for holder in holders:
+            if holder == own_ip:
+                continue
+            
+            # Check if peer is alive
+            if not self.check_ip_alive(holder, remove_if_dead=False):
+                continue
+            
+            try:
+                # Call the compare endpoint on the peer
+                compare_url = f"http://{holder}:8000/api/v1/models/compare/{model_id}"
+                compare_payload = {
+                    "model_id": model_id,
+                    "training_completed": local_training_completed,
+                    "last_trained_batch": local_last_trained_batch,
+                    "last_predicted_batch_by_dataset": local_last_predicted
+                }
+                
+                resp = requests.post(compare_url, json=compare_payload, timeout=self.timeout)
+                
+                if resp.status_code != 200:
+                    print(f"[check_and_update_model_from_peers] Peer {holder} compare failed: {resp.status_code}")
+                    continue
+                
+                compare_result = resp.json()
+                
+                if not compare_result.get("is_better", False):
+                    print(f"[check_and_update_model_from_peers] Peer {holder} is not better")
+                    continue
+                
+                print(f"[check_and_update_model_from_peers] Peer {holder} has better version!")
+                print(f"  better_training={compare_result.get('better_training')}")
+                print(f"  better_predictions={compare_result.get('better_predictions')}")
+                
+                # If peer has better training, we need to fetch the full model
+                if compare_result.get("better_training", False):
+                    best_training_peer = holder
+                
+                # Track which datasets this peer has better predictions for
+                for dataset_id in compare_result.get("better_predictions", []):
+                    if dataset_id not in better_predictions_peers:
+                        better_predictions_peers[dataset_id] = holder
+                        
+            except Exception as e:
+                print(f"[check_and_update_model_from_peers] Error comparing with {holder}: {e}")
+                continue
+        
+        # No better version found
+        if not best_training_peer and not better_predictions_peers:
+            print(f"[check_and_update_model_from_peers] No better version found for {model_id}")
+            return None
+        
+        updated_model = None
+        
+        # If a peer has better training, fetch and replace the entire model
+        if best_training_peer:
+            print(f"[check_and_update_model_from_peers] Fetching full model from {best_training_peer}")
+            try:
+                fetch_url = f"http://{best_training_peer}:8000/api/v1/models/{model_id}"
+                resp = requests.get(fetch_url, timeout=self.timeout)
+                
+                if resp.status_code == 200:
+                    peer_response = resp.json()
+                    updated_model = peer_response.get("model_data", peer_response)
+                    print(f"[check_and_update_model_from_peers] Replaced model with version from {best_training_peer}")
+            except Exception as e:
+                print(f"[check_and_update_model_from_peers] Error fetching model from {best_training_peer}: {e}")
+        
+        # If we only need to update predictions (and didn't replace the whole model)
+        if better_predictions_peers and not updated_model:
+            updated_model = local_model_data.copy()
+            
+            for dataset_id, peer_ip in better_predictions_peers.items():
+                print(f"[check_and_update_model_from_peers] Fetching prediction data for {dataset_id} from {peer_ip}")
+                try:
+                    # Fetch the peer's model to get their prediction data
+                    fetch_url = f"http://{peer_ip}:8000/api/v1/models/{model_id}"
+                    resp = requests.get(fetch_url, timeout=self.timeout)
+                    
+                    if resp.status_code == 200:
+                        peer_response = resp.json()
+                        peer_model_data = peer_response.get("model_data", peer_response)
+                        
+                        # Update predictions_by_dataset in metadata
+                        peer_metadata = peer_model_data.get("metadata", {})
+                        peer_predictions_by_dataset = peer_metadata.get("predictions_by_dataset", {})
+                        
+                        if dataset_id in peer_predictions_by_dataset:
+                            # Ensure our metadata structure exists
+                            if "metadata" not in updated_model:
+                                updated_model["metadata"] = {}
+                            if "predictions_by_dataset" not in updated_model["metadata"]:
+                                updated_model["metadata"]["predictions_by_dataset"] = {}
+                            
+                            # Copy the prediction data for this dataset
+                            updated_model["metadata"]["predictions_by_dataset"][dataset_id] = \
+                                peer_predictions_by_dataset[dataset_id]
+                            
+                            # Also update last_predicted_batch_by_dataset
+                            if "last_predicted_batch_by_dataset" not in updated_model:
+                                updated_model["last_predicted_batch_by_dataset"] = {}
+                            
+                            peer_last_predicted = peer_model_data.get("last_predicted_batch_by_dataset", {})
+                            if dataset_id in peer_last_predicted:
+                                updated_model["last_predicted_batch_by_dataset"][dataset_id] = \
+                                    peer_last_predicted[dataset_id]
+                            
+                            print(f"[check_and_update_model_from_peers] Updated predictions for {dataset_id}")
+                except Exception as e:
+                    print(f"[check_and_update_model_from_peers] Error fetching predictions from {peer_ip}: {e}")
+        
+        return updated_model
+
+    # =====================================================================
+    # PREDICTION JSON REPLICATION METHODS
+    # =====================================================================
+
+    def load_prediction_json_content(self, model_id: str, dataset_id: str) -> Optional[bytes]:
+        """
+        Load prediction JSON content from local storage.
+        
+        Args:
+            model_id: ID of the model used for the prediction
+            dataset_id: ID of the dataset used for the prediction
+            
+        Returns:
+            Prediction JSON file content as bytes, or None if not found
+        """
+        try:
+            from config.manager import PREDICTIONS
+            
+            prediction_path = Path(PREDICTIONS) / f"{model_id}_{dataset_id}.json"
+            
+            if not prediction_path.exists():
+                print(f"[load_prediction_json_content] Prediction file not found: {prediction_path}")
+                return None
+            
+            with open(prediction_path, 'rb') as f:
+                content = f.read()
+            
+            print(f"[load_prediction_json_content] Loaded prediction {model_id}_{dataset_id}: {len(content)} bytes")
+            return content
+            
+        except Exception as e:
+            print(f"[load_prediction_json_content] Error loading prediction {model_id}_{dataset_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def save_prediction_json_content(self, model_id: str, dataset_id: str, prediction_json: bytes) -> bool:
+        """
+        Save prediction JSON content to local storage.
+        
+        Args:
+            model_id: ID of the model used for the prediction
+            dataset_id: ID of the dataset used for the prediction
+            prediction_json: Prediction JSON content as bytes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from config.manager import PREDICTIONS
+            
+            predictions_dir = Path(PREDICTIONS)
+            predictions_dir.mkdir(parents=True, exist_ok=True)
+            
+            prediction_path = predictions_dir / f"{model_id}_{dataset_id}.json"
+            
+            with open(prediction_path, 'wb') as f:
+                f.write(prediction_json)
+            
+            print(f"[save_prediction_json_content] Saved prediction {model_id}_{dataset_id}: {len(prediction_json)} bytes")
+            
+            # Update metadata to track that this node has the prediction
+            self.peer_metadata.update_prediction(model_id, dataset_id, self.own_ip)
+            
+            return True
+            
+        except Exception as e:
+            print(f"[save_prediction_json_content] Error saving prediction {model_id}_{dataset_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def check_and_rereplicate_predictions(self, prediction_keys: set = None):
+        """
+        Check replication factor for predictions and re-replicate if needed.
+
+        Args:
+            prediction_keys: Optional set of specific prediction keys (model_id, dataset_id) to check.
+                            If None, checks all known predictions.
+        """
+        if prediction_keys is None:
+            prediction_keys = set(self.peer_metadata.prediction_jsons.keys())
+
+        if not prediction_keys:
+            print("[check_and_rereplicate_predictions] No predictions to check")
+            return
+
+        print(f"[check_and_rereplicate_predictions] Checking {len(prediction_keys)} prediction(s)")
+
+        for key in prediction_keys:
+            model_id, dataset_id = key
+            current_holders = self.peer_metadata.get_prediction_nodes(model_id, dataset_id)
+            current_count = len(current_holders)
+            needed = self.REPLICATION_FACTOR - current_count
+
+            if needed > 0:
+                print(f"[check_and_rereplicate_predictions] Prediction {model_id}_{dataset_id} is under-replicated: "
+                    f"{current_count}/{self.REPLICATION_FACTOR} copies. Need {needed} more.")
+
+                # If this node has the prediction, initiate replication
+                if self.own_ip in current_holders:
+                    print(f"[check_and_rereplicate_predictions] This node has {model_id}_{dataset_id}, initiating re-replication")
+                    try:
+                        # Load prediction JSON from disk
+                        prediction_bytes = self.load_prediction_json_content(model_id, dataset_id)
+                        
+                        if prediction_bytes:
+                            self.replicate_prediction_json(model_id, dataset_id, prediction_bytes)
+                        else:
+                            print(f"[check_and_rereplicate_predictions] Could not load prediction {model_id}_{dataset_id} for re-replication")
+                    except Exception as e:
+                        print(f"[check_and_rereplicate_predictions] Error re-replicating prediction {model_id}_{dataset_id}: {e}")
+                else:
+                    print(f"[check_and_rereplicate_predictions] This node doesn't have {model_id}_{dataset_id}, held by: {current_holders}")
+            else:
+                print(f"[check_and_rereplicate_predictions] Prediction {model_id}_{dataset_id} has sufficient replicas: {current_count}/{self.REPLICATION_FACTOR}")
+
+    def replicate_prediction_json(self, model_id: str, dataset_id: str, prediction_json: bytes):
+        """
+        Ensure the prediction JSON exists on at least `REPLICATION_FACTOR` nodes.
+        """
+        # 1. Update own state first (if we have it)
+        try:
+            self.peer_metadata.update_prediction(model_id, dataset_id, self.own_ip)
+        except Exception as e:
+            print(f"[Prediction-Replication] Error updating own metadata: {e}")
+
+        # 2. Get current holders (including self)
+        current_holders = self.peer_metadata.get_prediction_nodes(model_id, dataset_id)
+        current_count = len(current_holders)
+        needed = self.REPLICATION_FACTOR - current_count
+
+        if needed <= 0:
+            print(f"[Prediction-Replication] Prediction {model_id}_{dataset_id} satisfies RF={self.REPLICATION_FACTOR}. No action needed.")
+            return
+
+        print(f"[Prediction-Replication] Prediction {model_id}_{dataset_id} needs {needed} more copies.")
+
+        # 3. Find candidates (Healthy IPs that are NOT in current_holders)
+        all_peers = self.get_healthy_peers()
+        candidates = [ip for ip in all_peers if ip not in current_holders]
+
+        if not candidates:
+            print("[Prediction-Replication] No available candidates found to replicate to.")
+            return
+
+        # 4. Select targets
+        targets = random.sample(candidates, min(needed, len(candidates)))
+        print(f"[Prediction-Replication] Selected targets: {targets}")
+
+        # 5. Send prediction JSON to targets
+        for ip in targets:
+            try:
+                print(f"[Prediction-Replication] Sending prediction {model_id}_{dataset_id} to {ip}...")
+                response = requests.post(
+                    f"http://{ip}:8000/api/v1/predictions/replicate",
+                    data={
+                        "model_id": model_id,
+                        "dataset_id": dataset_id,
+                        "nodes_ips": json.dumps(targets)
+                    },
+                    files={"file": (f"{model_id}_{dataset_id}.json", prediction_json, "application/json")},
+                    timeout=self.timeout,
+                )
+                if response.status_code == 200:
+                    print(f"[Prediction-Replication] Successfully replicated to {ip}")
+                    self.peer_metadata.update_prediction(model_id, dataset_id, ip)
+                else:
+                    print(f"[Prediction-Replication] Failed to send to {ip}: {response.text}")
+            except Exception as e:
+                print(f"[Prediction-Replication] Error sending to {ip}: {e}")
+
