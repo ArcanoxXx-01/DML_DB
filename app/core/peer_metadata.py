@@ -3,6 +3,7 @@ import time
 from typing import Dict, List, Set, Any, Tuple, Optional
 import requests
 import csv
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -10,7 +11,7 @@ class PeerMetadata:
     """
     Tracks which node has which dataset batches, model JSONs, and ensures all nodes have the CSVs.
     """
-    def __init__(self, node_id: str, csv_paths: Dict[str, Path] = None):
+    def __init__(self, node_id: str, csv_paths: Dict[str, Path] = None, metadata_dir: Path = None):
         self.node_id = node_id
         self.lock = threading.Lock()
         # Sync thread control
@@ -18,8 +19,16 @@ class PeerMetadata:
         self._stop_sync = threading.Event()
         self._middleware = None
         
+        # Persistence thread control
+        self._persist_thread: threading.Thread | None = None
+        self._stop_persist = threading.Event()
+        
         # CSV file paths
         self.csv_paths = csv_paths or {}
+        
+        # Metadata persistence path
+        self.metadata_dir = metadata_dir or Path("./data/metadata")
+        self.metadata_file = self.metadata_dir / "peer_metadata.json"
         
         # dataset_id -> set(node_id)
         self.datasets: Dict[str, Set[str]] = {}
@@ -39,6 +48,9 @@ class PeerMetadata:
             'models.csv': 0.0,
             'trainings.csv': 0.0
         }
+        
+        # Load persisted metadata on initialization
+        self._load_from_json()
 
     def update_dataset(self, dataset_id: str, node_id: str):
         with self.lock:
@@ -76,6 +88,101 @@ class PeerMetadata:
 
     def get_csv_nodes(self, csv_name: str) -> Set[str]:
         return self.csvs.get(csv_name, set())
+
+    def _load_from_json(self):
+        """Load persisted metadata from JSON file on initialization."""
+        if not self.metadata_file.exists():
+            print(f"[_load_from_json] No persisted metadata found at {self.metadata_file}")
+            return
+        
+        try:
+            with open(self.metadata_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            with self.lock:
+                # Load datasets
+                self.datasets = {
+                    dataset_id: set(nodes) 
+                    for dataset_id, nodes in data.get("datasets", {}).items()
+                }
+                
+                # Load model_jsons
+                self.model_jsons = {
+                    model_id: set(nodes) 
+                    for model_id, nodes in data.get("model_jsons", {}).items()
+                }
+                
+                # Load prediction_jsons (keys are "model_id::dataset_id")
+                self.prediction_jsons = {}
+                for key, nodes in data.get("prediction_jsons", {}).items():
+                    try:
+                        parts = key.split("::")
+                        model_id = parts[0].strip()
+                        dataset_id = "::".join(parts[1:]).strip()
+                        tuple_key = (model_id, dataset_id)
+                        self.prediction_jsons[tuple_key] = set(nodes)
+                    except Exception as e:
+                        print(f"[_load_from_json] Error parsing prediction key {key}: {e}")
+                
+                # Load csvs
+                for csv_name, nodes in data.get("csvs", {}).items():
+                    if csv_name in self.csvs:
+                        self.csvs[csv_name] = set(nodes)
+                
+                # Load csv_timestamps
+                for csv_name, timestamp in data.get("csv_timestamps", {}).items():
+                    if csv_name in self.csv_timestamps:
+                        self.csv_timestamps[csv_name] = timestamp
+            
+            print(f"[_load_from_json] Successfully loaded metadata from {self.metadata_file}")
+            print(f"  - Datasets: {len(self.datasets)}")
+            print(f"  - Models: {len(self.model_jsons)}")
+            print(f"  - Predictions: {len(self.prediction_jsons)}")
+            
+        except Exception as e:
+            print(f"[_load_from_json] Error loading metadata from JSON: {e}")
+
+    def _save_to_json(self):
+        """Save current metadata to JSON file for persistence."""
+        try:
+            with self.lock:
+                data = {
+                    "node_id": self.node_id,
+                    "datasets": {k: list(v) for k, v in self.datasets.items()},
+                    "model_jsons": {k: list(v) for k, v in self.model_jsons.items()},
+                    "prediction_jsons": {
+                        f"{mi}::{di}": list(v) 
+                        for (mi, di), v in self.prediction_jsons.items()
+                    },
+                    "csvs": {k: list(v) for k, v in self.csvs.items()},
+                    "csv_timestamps": self.csv_timestamps.copy(),
+                    "last_updated": time.time()
+                }
+            
+            # Ensure directory exists
+            self.metadata_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Write to temporary file first, then rename (atomic operation)
+            temp_file = self.metadata_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            
+            # Atomic rename
+            temp_file.replace(self.metadata_file)
+            
+        except Exception as e:
+            print(f"[_save_to_json] Error saving metadata to JSON: {e}")
+
+    def _persist_loop(self):
+        """Background loop that saves metadata to JSON every few seconds."""
+        while not self._stop_persist.is_set():
+            try:
+                self._save_to_json()
+            except Exception as e:
+                print(f"[_persist_loop] Error in persist loop: {e}")
+            
+            # Save every 5 seconds
+            self._stop_persist.wait(5.0)
 
     def get_datasets_by_node(self, node_id: str) -> Set[str]:
         """
@@ -462,6 +569,7 @@ class PeerMetadata:
         while not self._stop_sync.is_set():
             try:
                 peers = self._middleware.get_healthy_peers()
+                self._middleware._refresh_service_ip_cahe()
                 payload = self.to_dict()
                 # include our node id explicitly
                 payload["node_id"] = self.node_id
@@ -498,6 +606,13 @@ class PeerMetadata:
             self._sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
             self._sync_thread.start()
             print("[start_sync] Peer metadata sync thread started")
+        
+        # Start persistence thread
+        if self._persist_thread is None or not self._persist_thread.is_alive():
+            self._stop_persist.clear()
+            self._persist_thread = threading.Thread(target=self._persist_loop, daemon=True)
+            self._persist_thread.start()
+            print("[start_sync] Peer metadata persistence thread started")
 
     def stop_sync(self):
         """Stop the background sync thread if running."""
@@ -505,3 +620,13 @@ class PeerMetadata:
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=5.0)
             print("[stop_sync] Peer metadata sync thread stopped")
+        
+        # Stop persistence thread and save one last time
+        self._stop_persist.set()
+        if self._persist_thread and self._persist_thread.is_alive():
+            self._persist_thread.join(timeout=5.0)
+            print("[stop_sync] Peer metadata persistence thread stopped")
+        
+        # Final save before shutdown
+        self._save_to_json()
+        print("[stop_sync] Final metadata saved to disk")

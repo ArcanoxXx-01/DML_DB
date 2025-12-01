@@ -80,33 +80,55 @@ def update_health(model_id: str, dataset_id: Optional[str] = None) -> bool:
     return True
 
 
+def _is_model_training_completed(model_id: str, all_rows: list[dict]) -> bool:
+    """Check if a model has a completed training row (training_id is not null/empty)."""
+    for row in all_rows:
+        if (row.get("model_id") == model_id 
+            and row.get("training_id") 
+            and row.get("task") == "training"):
+            return row.get("status") == Status.COMPLETED.value
+    return False
+
+
 def find_model_to_run():
     limit = datetime.utcnow() - timedelta(seconds=20)
     try:
         with MODELS_META.open("r") as f:
             reader = csv.DictReader(f)
-            for row in reader:
-                status = row.get("status", "")
-                if status == Status.COMPLETED.value:
+            all_rows = list(reader)
+        
+        for row in all_rows:
+            status = row.get("status", "")
+            if status == Status.COMPLETED.value:
+                continue
+            
+            task_type = row.get("task", "")
+            
+            # If task is prediction, check if the model has completed training first
+            if task_type == "prediction":
+                model_id = row.get("model_id", "")
+                if not _is_model_training_completed(model_id, all_rows):
+                    # Skip this prediction row, training not yet completed
                     continue
-                flag = False
+            
+            flag = False
+            try:
+                h = datetime.fromisoformat(row["health"])
+            except Exception:
+                flag = True
+            if flag or h < limit:
+                dataset_id = row.get("dataset_id", "")
+                # mark the model as claimed by updating its health timestamp
                 try:
-                    h = datetime.fromisoformat(row["health"])
+                    update_health(row["model_id"], dataset_id)
                 except Exception:
-                    flag = True
-                if flag or h < limit:
-                    dataset_id = row.get("dataset_id", "")
-                    # mark the model as claimed by updating its health timestamp
-                    try:
-                        update_health(row["model_id"], dataset_id)
-                    except Exception:
-                        # if updating health fails, still return the model info
-                        pass
-                    return {
-                        "model_id": row["model_id"],
-                        "dataset_id": dataset_id,
-                        "running_type": row["task"],
-                    }
+                    # if updating health fails, still return the model info
+                    pass
+                return {
+                    "model_id": row["model_id"],
+                    "dataset_id": dataset_id,
+                    "running_type": row["task"],
+                }
     except FileNotFoundError:
         return None
     return None
