@@ -180,13 +180,156 @@ def load_model(model_id: str) -> Optional[GetModelResponse]:
     except Exception:
         return None
 
+
+def _is_incoming_model_better(existing_data: dict, incoming_data: dict) -> dict:
+    """
+    Compare incoming model with existing model to determine which is better.
+    
+    Returns a dict with:
+    - 'use_incoming_training': True if incoming has better training state
+    - 'better_prediction_datasets': list of dataset_ids where incoming has better predictions
+    """
+    existing_meta = existing_data.get("metadata", {})
+    incoming_meta = incoming_data.get("metadata", {})
+    
+    # Training comparison
+    existing_training_completed = existing_meta.get("training_completed", False)
+    incoming_training_completed = incoming_meta.get("training_completed", False)
+    existing_last_batch = existing_meta.get("last_trained_batch")
+    incoming_last_batch = incoming_meta.get("last_trained_batch")
+    
+    use_incoming_training = False
+    if incoming_training_completed and not existing_training_completed:
+        use_incoming_training = True
+    elif not existing_training_completed and not incoming_training_completed:
+        existing_b = existing_last_batch if existing_last_batch is not None else -1
+        incoming_b = incoming_last_batch if incoming_last_batch is not None else -1
+        if incoming_b > existing_b:
+            use_incoming_training = True
+    
+    # Prediction comparison
+    existing_predictions = existing_meta.get("last_predicted_batch_by_dataset", {}) or {}
+    incoming_predictions = incoming_meta.get("last_predicted_batch_by_dataset", {}) or {}
+    
+    better_prediction_datasets = []
+    for dataset_id, incoming_batch in incoming_predictions.items():
+        if dataset_id not in existing_predictions:
+            better_prediction_datasets.append(dataset_id)
+        else:
+            existing_b = existing_predictions.get(dataset_id, -1) or -1
+            incoming_b = incoming_batch if incoming_batch is not None else -1
+            if incoming_b > existing_b:
+                better_prediction_datasets.append(dataset_id)
+    
+    return {
+        "use_incoming_training": use_incoming_training,
+        "better_prediction_datasets": better_prediction_datasets
+    }
+
+
+def _merge_models(existing_data: dict, incoming_data: dict, comparison: dict) -> dict:
+    """
+    Merge existing and incoming model data based on comparison results.
+    Keeps the better parts from each version.
+    """
+    # If incoming training is better, use incoming as base
+    if comparison["use_incoming_training"]:
+        merged = incoming_data.copy()
+        merged_meta = merged.get("metadata", {})
+        existing_meta = existing_data.get("metadata", {})
+        
+        # Preserve existing predictions that are better
+        existing_predictions_by_ds = existing_meta.get("predictions_by_dataset", {}) or {}
+        existing_last_predicted = existing_meta.get("last_predicted_batch_by_dataset", {}) or {}
+        incoming_last_predicted = merged_meta.get("last_predicted_batch_by_dataset", {}) or {}
+        
+        if "predictions_by_dataset" not in merged_meta:
+            merged_meta["predictions_by_dataset"] = {}
+        if "last_predicted_batch_by_dataset" not in merged_meta:
+            merged_meta["last_predicted_batch_by_dataset"] = {}
+        
+        # Keep existing predictions where they are better
+        for dataset_id, existing_batch in existing_last_predicted.items():
+            incoming_batch = incoming_last_predicted.get(dataset_id, -1) or -1
+            existing_b = existing_batch if existing_batch is not None else -1
+            if existing_b > incoming_batch:
+                merged_meta["last_predicted_batch_by_dataset"][dataset_id] = existing_batch
+                if dataset_id in existing_predictions_by_ds:
+                    merged_meta["predictions_by_dataset"][dataset_id] = existing_predictions_by_ds[dataset_id]
+        
+        merged["metadata"] = merged_meta
+    else:
+        # Keep existing as base
+        merged = existing_data.copy()
+        merged_meta = merged.get("metadata", {})
+        incoming_meta = incoming_data.get("metadata", {})
+        
+        # Update predictions where incoming is better
+        incoming_predictions_by_ds = incoming_meta.get("predictions_by_dataset", {}) or {}
+        incoming_last_predicted = incoming_meta.get("last_predicted_batch_by_dataset", {}) or {}
+        
+        if "predictions_by_dataset" not in merged_meta:
+            merged_meta["predictions_by_dataset"] = {}
+        if "last_predicted_batch_by_dataset" not in merged_meta:
+            merged_meta["last_predicted_batch_by_dataset"] = {}
+        
+        for dataset_id in comparison["better_prediction_datasets"]:
+            if dataset_id in incoming_last_predicted:
+                merged_meta["last_predicted_batch_by_dataset"][dataset_id] = incoming_last_predicted[dataset_id]
+            if dataset_id in incoming_predictions_by_ds:
+                merged_meta["predictions_by_dataset"][dataset_id] = incoming_predictions_by_ds[dataset_id]
+        
+        merged["metadata"] = merged_meta
+    
+    return merged
+
+
 def save_model_file(model_id: str, update: bool, model_data: Any) -> bool:
-    """Save the given model_data (JSON-serializable) into the models folder as {model_id}.json."""
+    """
+    Save the given model_data (JSON-serializable) into the models folder as {model_id}.json.
+    
+    If a model file already exists, compares the incoming model with the existing one
+    and keeps/merges the most updated version based on:
+    - Training state (training_completed, last_trained_batch)
+    - Prediction state per dataset (last_predicted_batch_by_dataset)
+    """
     try:
         MODELS.mkdir(parents=True, exist_ok=True)
         model_file = MODELS / f"{model_id}.json"
+        
+        final_data = model_data
+        
+        # If file exists, compare and merge with existing data
+        if model_file.exists():
+            try:
+                with model_file.open("r") as f:
+                    existing_data = json.load(f)
+                
+                comparison = _is_incoming_model_better(existing_data, model_data)
+                
+                # Only merge if there's something better in either version
+                if comparison["use_incoming_training"] or comparison["better_prediction_datasets"]:
+                    final_data = _merge_models(existing_data, model_data, comparison)
+                elif not comparison["use_incoming_training"] and not comparison["better_prediction_datasets"]:
+                    # Existing is better or equal in all aspects, keep existing
+                    # But still check if incoming has any new predictions we don't have
+                    incoming_meta = model_data.get("metadata", {})
+                    existing_meta = existing_data.get("metadata", {})
+                    incoming_pred = incoming_meta.get("last_predicted_batch_by_dataset", {}) or {}
+                    existing_pred = existing_meta.get("last_predicted_batch_by_dataset", {}) or {}
+                    
+                    new_datasets = [ds for ds in incoming_pred.keys() if ds not in existing_pred]
+                    if new_datasets:
+                        comparison["better_prediction_datasets"] = new_datasets
+                        final_data = _merge_models(existing_data, model_data, comparison)
+                    else:
+                        final_data = existing_data
+            except (json.JSONDecodeError, KeyError):
+                # If existing file is corrupted, use incoming data
+                final_data = model_data
+        
         with model_file.open("w") as f:
-            json.dump(model_data, f, indent=2)
+            json.dump(final_data, f, indent=2)
         return True
     except Exception:
         return False
