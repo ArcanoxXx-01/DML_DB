@@ -2,7 +2,7 @@ from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException, Body, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 import requests
-from schemas.datasets import DatasetUploadResponse
+from schemas.datasets import DatasetUploadResponse, DatasetListResponse
 from api.services.dataset_services import (
     save_batches,
     get_batch_file,
@@ -14,6 +14,16 @@ import csv
 from config.config import middleware
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+
+@router.get("/", response_model=DatasetListResponse)
+def get_all_datasets():
+    """
+    Returns the list of all dataset IDs stored locally.
+    """
+    datasets = list_meta()
+    return DatasetListResponse(datasets=datasets)
+
 
 # Helper to write raw row to datasets.csv (Implement based on your project structure)
 def _append_meta_row(row: list):
