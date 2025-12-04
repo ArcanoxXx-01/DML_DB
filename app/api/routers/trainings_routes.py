@@ -1,9 +1,21 @@
 from fastapi import APIRouter, HTTPException, Body
-from api.services.trainings_services import create_training, get_training_by_id
+from typing import List
+from api.services.trainings_services import create_training, get_training_by_id, get_all_trainings
 from schemas.trainings import TrainingCreateRequest, TrainingResponse
 
 
 router = APIRouter(prefix="/trainings", tags=["trainings"])
+
+
+@router.get("", response_model=List[TrainingResponse])
+def get_all_trainings_endpoint():
+    """
+    Retrieve all training sessions.
+    """
+    trainings = get_all_trainings()
+    if not trainings:
+        raise HTTPException(status_code=404, detail="No trainings found")
+    return trainings
 
 
 @router.post("")

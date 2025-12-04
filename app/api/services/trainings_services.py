@@ -50,6 +50,27 @@ def get_training_by_id(training_id: str):
     return None
 
 
+def get_all_trainings():
+    """Retrieve all trainings from the database."""
+    trainings = []
+    try:
+        if not TRAININGS_META.exists():
+            return trainings
+        with TRAININGS_META.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                models = list_models_by_training_id(row["training_id"])
+                trainings.append({
+                    "training_id": row["training_id"],
+                    "dataset_id": row["dataset_id"],
+                    "training_type": row["training_type"],
+                    "models_ids": models,
+                })
+    except Exception:
+        pass
+    return trainings
+
+
 def save_results(training_id: str, model_id: str, results: dict):
     """Save training results (metrics) for a given model.
 
