@@ -15,7 +15,7 @@ from api.services.models_services import load_model
 class Middleware:
     """Middleware class for sending HTTP requests with Pydantic schema validation and IP caching."""
 
-    def __init__(self, timeout: float = 30.0, health_check_timeout: float = 10.0, csv_paths: dict[str, Path] = None):
+    def __init__(self, timeout: float = 30.0, health_check_timeout: float = 10.0, csv_paths: dict[str, Path] = None, ip_cache: Optional[dict[str, List[str]]] = None):
         """
         Initialize the middleware.
         
@@ -28,7 +28,7 @@ class Middleware:
         self.timeout = timeout
         self.health_check_timeout = health_check_timeout
         self.own_ip = self._get_own_ip()
-        self.ip_cache: dict[str, List[str]] = {}
+        self.ip_cache: dict[str, List[str]] = ip_cache or {}
         self.monitoring_thread: Optional[threading.Thread] = None
         self.stop_monitoring = threading.Event()
         self.discovery_thread: Optional[threading.Thread] = None

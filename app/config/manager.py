@@ -5,6 +5,12 @@ BATCH_SIZE = 1024
 METRICS = 10
 MEMBERSHIPS_TIME_REFRESH = 10
 
+# Time synchronization offset (seconds). Updated by the TimeSync service.
+TIME_OFFSET_SECONDS = 0
+# How often (in seconds) the TimeSync background thread wakes up to check
+# whether the month changed. Default: 30 days.
+TIME_SYNC_CHECK_INTERVAL_SECONDS = 30 * 24 * 60 * 60
+
 # ===== PATHS =====
 _DATA_PATH_ = Path("./data")
 DATASETS = _DATA_PATH_ / "datasets"

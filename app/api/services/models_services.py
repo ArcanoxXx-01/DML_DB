@@ -4,7 +4,7 @@ import json
 from typing import Optional, Any
 from config.manager import MODELS_META, METRICS, MODELS, HEADERS
 from datetime import datetime, timedelta
-from utils.utils import gen_id
+from utils.utils import gen_id, now_dt, now_iso
 from schemas.models import GetModelResponse
 from models.status import Status
 
@@ -32,7 +32,7 @@ def create_models_for_training(
                 training_type,
                 task,
                 "pending",
-                datetime.utcnow().isoformat(),
+                now_iso(),
             ]
             r.extend(["0" for _ in range(METRICS)])
             writer.writerow(r)
@@ -68,7 +68,7 @@ def update_health(model_id: str, dataset_id: Optional[str] = None) -> bool:
 
     for i in range(1, len(rows)):
         if rows[i][0] == model_id and ((dataset_id is None and rows[i][5] == "training") or rows[i][2] == dataset_id):
-            rows[i][health_index] = datetime.utcnow().isoformat()
+            rows[i][health_index] = now_iso()
             found = True
             break
 
@@ -91,7 +91,7 @@ def _is_model_training_completed(model_id: str, all_rows: list[dict]) -> bool:
 
 
 def find_model_to_run():
-    limit = datetime.utcnow() - timedelta(seconds=20)
+    limit = now_dt() - timedelta(seconds=20)
     try:
         with MODELS_META.open("r") as f:
             reader = csv.DictReader(f)

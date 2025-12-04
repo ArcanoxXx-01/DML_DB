@@ -5,6 +5,7 @@ from api.services.models_services import (
     list_models_by_training_id,
 )
 from api.services.models_services import update_model_metrics, update_health
+from utils.utils import now_iso
 from typing import List
 import csv
 
@@ -13,7 +14,7 @@ def create_training(
     training_id: str, dataset_id: str, training_type: str, models_names: List[str]
 ):
     task = "training"
-    created_at = datetime.now().isoformat()
+    created_at = now_iso()
     status = "pending"
     # Use Path.open with newline="" and csv.writer to avoid extra blank lines
     try:

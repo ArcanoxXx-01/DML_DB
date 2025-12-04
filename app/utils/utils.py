@@ -1,7 +1,8 @@
 import time, uuid
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import csv
+import config.manager as manager
 from config.manager import (
     _DATA_PATH_,
     DATASETS,
@@ -15,11 +16,18 @@ from config.manager import (
 
 
 def now_ts() -> float:
-    return time.time()
+    """Returns the current UNIX timestamp, adjusted by TIME_OFFSET_SECONDS."""
+    return time.time() + manager.TIME_OFFSET_SECONDS
+
+
+def now_dt() -> datetime:
+    """Returns the current UTC datetime, adjusted by TIME_OFFSET_SECONDS."""
+    return datetime.utcnow() + timedelta(seconds=manager.TIME_OFFSET_SECONDS)
 
 
 def now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    """Returns the current adjusted UTC datetime as an ISO-8601 string."""
+    return now_dt().isoformat()
 
 
 def gen_id(prefix: Optional[str] = None) -> str:

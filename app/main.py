@@ -3,8 +3,12 @@ from api.routers import datasets_routes, trainings_routes, models_routes, result
 from config.manager import API
 from utils.utils import ensure_paths_exists
 from config.config import middleware
+from core.time_sync import TimeSync
 
 ensure_paths_exists()
+
+# Time sync service (monthly)
+_time_sync = TimeSync()
 
 
 def create_app():
@@ -22,6 +26,8 @@ def create_app():
         """Start middleware monitoring after FastAPI is ready."""
         print("[FastAPI] Application started, beginning middleware monitoring...")
         middleware.start_monitoring()
+        # Start monthly time synchronization
+        _time_sync.start(middleware)
 
 
     # Add shutdown event to cleanup
@@ -30,6 +36,7 @@ def create_app():
         """Stop middleware monitoring on shutdown."""
         print("[FastAPI] Application shutting down, stopping middleware monitoring...")
         middleware.stop_monitoring_thread()
+        _time_sync.stop()
 
 
     return app

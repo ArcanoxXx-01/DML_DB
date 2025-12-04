@@ -32,7 +32,7 @@ def save_prediction_session(model_id: str, dataset_id: str) -> bool:
                 "N/A",  # No training_type for predictions
                 "prediction",
                 Status.PENDING.value,
-                datetime.utcnow().isoformat(),
+                now_iso(),
             ]
             r.extend(["0" for _ in range(METRICS)])
             writer.writerow(r)
