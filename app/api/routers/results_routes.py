@@ -1,11 +1,20 @@
 from fastapi import APIRouter, HTTPException, Body
 from api.services.trainings_services import save_results
 from api.services.predictions_services import save_prediction_session, save_prediction_results
-from schemas.trainings import ResultsCreateRequest, ResultsResponse
+from api.services.models_services import get_training_metrics
+from schemas.trainings import ResultsCreateRequest, ResultsResponse, TrainingMetricsResponse
 from schemas.prediction import savePredictionRequest, SavePredictionResponse, savePredictionResultsRequest
 
 
 router = APIRouter(prefix="/results", tags=["results"])
+
+
+@router.get("/training/{model_id}", response_model=TrainingMetricsResponse)
+def get_training_metrics_endpoint(model_id: str):
+    metrics = get_training_metrics(model_id)
+    if metrics is None:
+        raise HTTPException(status_code=404, detail=f"Metrics for model '{model_id}' not found")
+    return TrainingMetricsResponse(metrics=metrics)
 
 
 @router.post("/training", response_model=ResultsResponse)

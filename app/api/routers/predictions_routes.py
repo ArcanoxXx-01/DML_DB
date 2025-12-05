@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 import json
 import requests
 from config.config import middleware
-from api.services.predictions_services import save_prediction_session, save_prediction_results, get_prediction_results
-from schemas.prediction import savePredictionRequest, SavePredictionResponse, SavePredictionResultsRequest, SavePredictionResultsResponse, GetPredictionResponse
+from api.services.predictions_services import save_prediction_session, save_prediction_results, get_prediction_results, get_all_predictions_by_model
+from schemas.prediction import savePredictionRequest, SavePredictionResponse, SavePredictionResultsRequest, SavePredictionResultsResponse, GetPredictionResponse, GetAllPredictionsByModelResponse
 
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
@@ -111,6 +111,23 @@ def save_prediction_results_endpoint(
         model_id=req.model_id,
         dataset_id=req.dataset_id,
         saved=True
+    )
+
+
+@router.get("/model/{model_id}", response_model=GetAllPredictionsByModelResponse)
+def get_all_predictions_by_model_endpoint(model_id: str):
+    """
+    Get all dataset IDs where predictions were created for a specific model,
+    including those that haven't finished yet (PENDING status).
+    """
+    predictions_data = get_all_predictions_by_model(model_id)
+    
+    dataset_ids = [pred.get("dataset_id", "") for pred in predictions_data if pred.get("dataset_id")]
+    
+    return GetAllPredictionsByModelResponse(
+        model_id=model_id,
+        dataset_ids=dataset_ids,
+        total=len(dataset_ids)
     )
 
 

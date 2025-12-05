@@ -30,3 +30,7 @@ class ResultsResponse(BaseModel):
     training_id: str
     model_id: str
     results: Dict[str, float]
+
+
+class TrainingMetricsResponse(BaseModel):
+    metrics: Dict[str, float]

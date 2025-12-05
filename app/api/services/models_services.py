@@ -147,6 +147,31 @@ def get_model_metrics(model_id: str):
     return None
 
 
+def get_training_metrics(model_id: str) -> Optional[dict]:
+    """Get training metrics for a specific model.
+    
+    Returns a dict with metric names as keys and their values as floats,
+    or None if the model is not found.
+    """
+    metric_columns = ["accuracy", "f1_score", "precision", "recall", "roc_auc", "log_loss", "rmse", "mae", "mse", "r2"]
+    try:
+        with MODELS_META.open("r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("model_id") == model_id and row.get("task") == "training":
+                    metrics = {}
+                    for col in metric_columns:
+                        if col in row and row[col]:
+                            try:
+                                metrics[col] = float(row[col])
+                            except (ValueError, TypeError):
+                                pass
+                    return metrics
+    except FileNotFoundError:
+        return None
+    return None
+
+
 def get_model_info(model_id: str):
     """Return basic model info from MODELS_META CSV for a given model_id.
 

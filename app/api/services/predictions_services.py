@@ -134,3 +134,52 @@ def get_prediction_results(model_id: str, dataset_id: str) -> Optional[Dict[str,
     except Exception as e:
         print(f"[get_prediction_results] Error loading prediction {model_id}_{dataset_id}: {e}")
         return None
+
+
+def get_all_predictions_by_model(model_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all predictions created for a specific model from models.csv,
+    including those that haven't finished yet (PENDING status).
+    
+    Args:
+        model_id: ID of the model to get predictions for
+        
+    Returns:
+        List of dictionaries with prediction metadata from models.csv
+    """
+    predictions = []
+    try:
+        if not MODELS_META.exists():
+            return predictions
+
+        with MODELS_META.open("r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+
+        if not rows:
+            return predictions
+
+        header = rows[0]
+        header_index = {h: i for i, h in enumerate(header)}
+
+        for row in rows[1:]:
+            if len(row) == 0:
+                continue
+            
+            # Check if this row belongs to the requested model and is a prediction task
+            model_idx = header_index.get("model_id", 0)
+            task_idx = header_index.get("task")
+            
+            if row[model_idx] == model_id:
+                # Check if it's a prediction task
+                if task_idx is not None and row[task_idx] == "prediction":
+                    prediction_data = {}
+                    for col_name, col_idx in header_index.items():
+                        if col_idx < len(row):
+                            prediction_data[col_name] = row[col_idx]
+                    predictions.append(prediction_data)
+
+        return predictions
+    except Exception as e:
+        print(f"[get_all_predictions_by_model] Error reading predictions for model {model_id}: {e}")
+        return predictions
