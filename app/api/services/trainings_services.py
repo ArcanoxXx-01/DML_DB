@@ -88,3 +88,20 @@ def save_results(training_id: str, model_id: str, results: dict):
         return {"saved": True, "training_id": training_id, "model_id": model_id, "results": results}
     except Exception as e:
         return {"saved": False, "reason": str(e)}
+
+
+def get_all_training_ids() -> List[str]:
+    """Retrieve all unique training IDs from the database."""
+    training_ids = []
+    try:
+        if not TRAININGS_META.exists():
+            return training_ids
+        with TRAININGS_META.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                tid = row.get("training_id", "")
+                if tid and tid not in training_ids:
+                    training_ids.append(tid)
+    except Exception:
+        pass
+    return training_ids

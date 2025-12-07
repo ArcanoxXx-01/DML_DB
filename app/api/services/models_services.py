@@ -1,7 +1,7 @@
 from pathlib import Path
 import csv
 import json
-from typing import Optional, Any
+from typing import Optional, Any, List
 from config.manager import MODELS_META, METRICS, MODELS, HEADERS
 from datetime import datetime, timedelta
 from utils.utils import gen_id, now_dt, now_iso
@@ -40,7 +40,7 @@ def create_models_for_training(
     return created
 
 
-def list_models_by_training_id(training_id: str):
+def list_models_by_training_id(training_id: str) -> List[str]:
     ids = []
     try:
         with MODELS_META.open("r") as f:
@@ -51,6 +51,65 @@ def list_models_by_training_id(training_id: str):
     except FileNotFoundError:
         return []
     return ids
+
+
+def check_model_trained(model_id: str) -> dict:
+    """Check if a model has completed training.
+    
+    Returns a dict with:
+    - model_id: the model ID
+    - trained: True if training is completed, False otherwise
+    - status: current status of the training task
+    """
+    try:
+        with MODELS_META.open("r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("model_id") == model_id and row.get("task") == "training":
+                    status = row.get("status", "")
+                    return {
+                        "model_id": model_id,
+                        "trained": status == Status.COMPLETED.value,
+                        "status": status
+                    }
+    except FileNotFoundError:
+        pass
+    return {"model_id": model_id, "trained": False, "status": "not_found"}
+
+
+def check_model_dataset_completed(model_id: str, dataset_id: str) -> dict:
+    """Check if a model + dataset combination has completed (training or prediction).
+    
+    Returns a dict with:
+    - model_id: the model ID
+    - dataset_id: the dataset ID
+    - completed: True if the task is completed, False otherwise
+    - task: the task type (training or prediction)
+    - status: current status
+    """
+    try:
+        with MODELS_META.open("r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("model_id") == model_id and row.get("dataset_id") == dataset_id:
+                    status = row.get("status", "")
+                    task = row.get("task", "")
+                    return {
+                        "model_id": model_id,
+                        "dataset_id": dataset_id,
+                        "completed": status == Status.COMPLETED.value,
+                        "task": task,
+                        "status": status
+                    }
+    except FileNotFoundError:
+        pass
+    return {
+        "model_id": model_id,
+        "dataset_id": dataset_id,
+        "completed": False,
+        "task": "not_found",
+        "status": "not_found"
+    }
 
 
 def update_health(model_id: str, dataset_id: Optional[str] = None) -> bool:
@@ -97,6 +156,28 @@ def find_model_to_run():
             reader = csv.DictReader(f)
             all_rows = list(reader)
         
+        # Filter out rows where model_id doesn't start with "model"
+        valid_rows = []
+        invalid_found = False
+        for row in all_rows:
+            model_id = row.get("model_id", "")
+            if model_id.startswith("model"):
+                valid_rows.append(row)
+            else:
+                invalid_found = True
+        
+        # If invalid rows were found, rewrite the file with only valid rows
+        if invalid_found:
+            with MODELS_META.open("r") as f:
+                reader = csv.reader(f)
+                header = next(reader)
+            with MODELS_META.open("w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                for row in valid_rows:
+                    writer.writerow([row.get(h, "") for h in header])
+            all_rows = valid_rows
+        
         for row in all_rows:
             status = row.get("status", "")
             if status == Status.COMPLETED.value:
@@ -142,6 +223,37 @@ def get_model_metrics(model_id: str):
                 if row["model_id"] == model_id:
                     metrics = [row[k] for k in row.keys() if k.startswith("metric_")]
                     return {"model_data": metrics}
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def get_training_metrics(model_id: str) -> Optional[dict]:
+    """Get training metrics for a specific model.
+    
+    Returns a dict with all metric columns (accuracy, f1_score, etc.) for the model's training task.
+    Returns None if the model is not found.
+    """
+    metric_columns = ["accuracy", "f1_score", "precision", "recall", "roc_auc", "log_loss", "rmse", "mae", "mse", "r2"]
+    try:
+        with MODELS_META.open("r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("model_id") == model_id and row.get("task") == "training":
+                    metrics = {}
+                    for col in metric_columns:
+                        if col in row:
+                            try:
+                                metrics[col] = float(row[col]) if row[col] else 0.0
+                            except ValueError:
+                                metrics[col] = 0.0
+                    return {
+                        "model_id": model_id,
+                        "training_id": row.get("training_id", ""),
+                        "dataset_id": row.get("dataset_id", ""),
+                        "status": row.get("status", ""),
+                        "metrics": metrics
+                    }
     except FileNotFoundError:
         return None
     return None
