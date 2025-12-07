@@ -33,3 +33,8 @@ class GetPredictionResponse(BaseModel):
     dataset_id: str
     created_at: Optional[str] = None
     predictions: List[Any]
+
+
+class GetDatasetIdsForModelResponse(BaseModel):
+    model_id: str
+    dataset_ids: List[str]

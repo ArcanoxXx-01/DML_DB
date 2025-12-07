@@ -134,3 +134,47 @@ def get_prediction_results(model_id: str, dataset_id: str) -> Optional[Dict[str,
     except Exception as e:
         print(f"[get_prediction_results] Error loading prediction {model_id}_{dataset_id}: {e}")
         return None
+
+
+def get_dataset_ids_for_model(model_id: str) -> List[str]:
+    """
+    Get all dataset_ids that have predictions for a given model_id.
+    Reads from models.csv where model_id matches and task is 'prediction'.
+    
+    Args:
+        model_id: ID of the model to search predictions for
+        
+    Returns:
+        List of dataset_ids with predictions for the model
+    """
+    try:
+        if not MODELS_META.exists():
+            return []
+
+        dataset_ids = []
+        with MODELS_META.open("r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+
+        if not rows:
+            return []
+
+        header = rows[0]
+        header_index = {h: i for i, h in enumerate(header)}
+        
+        model_id_idx = header_index.get("model_id")
+        dataset_id_idx = header_index.get("dataset_id")
+        task_idx = header_index.get("task")
+
+        if model_id_idx is None or dataset_id_idx is None or task_idx is None:
+            return []
+
+        for row in rows[1:]:
+            if len(row) > max(model_id_idx, dataset_id_idx, task_idx):
+                if row[model_id_idx] == model_id and row[task_idx] == "prediction":
+                    dataset_ids.append(row[dataset_id_idx])
+
+        return dataset_ids
+    except Exception as e:
+        print(f"[get_dataset_ids_for_model] Error getting datasets for model {model_id}: {e}")
+        return []

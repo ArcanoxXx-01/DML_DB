@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 import json
 import requests
 from config.config import middleware
-from api.services.predictions_services import save_prediction_session, save_prediction_results, get_prediction_results
-from schemas.prediction import savePredictionRequest, SavePredictionResponse, SavePredictionResultsRequest, SavePredictionResultsResponse, GetPredictionResponse
+from api.services.predictions_services import save_prediction_session, save_prediction_results, get_prediction_results, get_dataset_ids_for_model
+from schemas.prediction import savePredictionRequest, SavePredictionResponse, SavePredictionResultsRequest, SavePredictionResultsResponse, GetPredictionResponse, GetDatasetIdsForModelResponse
 
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
@@ -111,6 +111,18 @@ def save_prediction_results_endpoint(
         model_id=req.model_id,
         dataset_id=req.dataset_id,
         saved=True
+    )
+
+
+@router.get("/{model_id}/datasets", response_model=GetDatasetIdsForModelResponse)
+def get_datasets_for_model_endpoint(model_id: str):
+    """
+    Get all dataset_ids of predictions for a given model_id.
+    """
+    dataset_ids = get_dataset_ids_for_model(model_id)
+    return GetDatasetIdsForModelResponse(
+        model_id=model_id,
+        dataset_ids=dataset_ids
     )
 
 
