@@ -15,6 +15,15 @@ from config.config import middleware
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
+
+@router.get("/", response_model=List[str])
+def get_all_datasets():
+    """
+    Devuelve todos los dataset_id almacenados.
+    """
+    return list_meta()
+
+
 # Helper to write raw row to datasets.csv (Implement based on your project structure)
 def _append_meta_row(row: list):
     with open('storage/datasets.csv', 'a', newline='') as f:

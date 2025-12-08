@@ -1169,6 +1169,8 @@ class Middleware:
         print(f"[Prediction-Replication] Selected targets: {targets}")
 
         # 5. Send prediction JSON to targets
+        # Include origin node (self) and all targets in nodes_ips so recipients know all holders
+        all_holders = list(current_holders) + targets
         for ip in targets:
             try:
                 print(f"[Prediction-Replication] Sending prediction {model_id}_{dataset_id} to {ip}...")
@@ -1177,7 +1179,7 @@ class Middleware:
                     data={
                         "model_id": model_id,
                         "dataset_id": dataset_id,
-                        "nodes_ips": json.dumps(targets)
+                        "nodes_ips": json.dumps(all_holders)
                     },
                     files={"file": (f"{model_id}_{dataset_id}.json", prediction_json, "application/json")},
                     timeout=self.timeout,
